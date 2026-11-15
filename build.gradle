@@ -1,0 +1,102 @@
+plugins {
+    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+    id 'org.spongepowered.mixin' version '0.7.+'
+    id 'eclipse'
+    id 'maven-publish'
+}
+
+version = mod_version
+group = 'bincnpc.gun'
+archivesBaseName = 'cnpcgun'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+minecraft {
+    mappings channel: 'official', version: '1.20.1'
+
+    runs {
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            property 'mixin.debug.export', 'true'
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
+            mods {
+                cnpcgun {
+                    source sourceSets.main
+                }
+            }
+        }
+
+        server {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                cnpcgun {
+                    source sourceSets.main
+                }
+            }
+        }
+
+        data {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            args '--mod', 'cnpcgun', '--all', '--output', file('src/generated/resources/')
+            mods {
+                cnpcgun {
+                    source sourceSets.main
+                }
+            }
+        }
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+repositories {
+    mavenCentral()
+    flatDir { dirs 'libs' }
+}
+
+dependencies {
+    minecraft 'net.minecraftforge:forge:1.20.1-47.4.6'
+    implementation fg.deobf(files('libs/CustomNPCs-1.20.1-GBPort-Unofficial-1.20.1.20260711.jar'))
+    implementation fg.deobf(files('libs/cnpcplus-4.1.0-1.20.1Forge.jar'))
+    implementation fg.deobf(files('libs/player-animation-lib-1.0.2.jar'))
+    compileOnly fg.deobf(fileTree(dir: 'libs', includes: ['tacz-*.jar', 'cgm-*.jar', 'superbwarfare-*.jar', 'irons-artifice-*.jar', 'lrtactical-*.jar', 'slashblade-*.jar', 'framework-*.jar', 'geckolib-*.jar', 'irons_lib-*.jar', 'kotlinforforge-*.jar', 'npcpathfindinglegacy-*.jar']))
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+}
+
+mixin {
+    add sourceSets.main, 'cnpcgun.refmap.json'
+    config 'mixins.cnpcgun.json'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-Xlint:-processing'
+}
+
+jar {
+    archiveFileName = "${mod_name}.jar"
+    manifest.attributes('Specification-Title': mod_name, 'Specification-Vendor': 'XiaoBiniaoX',
+        'Specification-Version': project.version.toString(), 'Implementation-Title': 'cnpcgun',
+        'Implementation-Version': project.version.toString(), 'Implementation-Vendor': 'XiaoBiniaoX',
+        'MixinConfigs': 'mixins.cnpcgun.json')
+    from('LICENSE')
+    finalizedBy 'reobfJar'
+}
+
+tasks.register('contractCheck', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'bincnpc.gun.ContractChecks'
+}
+check.dependsOn contractCheck
