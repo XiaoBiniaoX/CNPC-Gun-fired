@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "bincnpc.gun.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "cnpcgun.refmap.json",
+  "plugin": "bincnpc.gun.mixin.CompatMixinPlugin",
+  "mixins": [
+    "ScriptGlobalsMixin", "ExternalStoreInvoker", "ExternalPortableMixin",
+    "NpcDataMixin", "LinkedNpcMixin", "ClonePortableMixin", "RangedAiMixin", "MeleeAiMixin", "ProjectileHitAccess", "ProjectileFactoryAccess",
+    "compat.BladeDurabilityMixin", "compat.BladeTargetsMixin", "compat.ArtificeReloadMixin", "compat.TaczReloadMixin", "compat.SuperbAmmoMixin", "compat.PathfindingTacticsMixin", "compat.CgmThrowAccess", "compat.SuperbThrowGravityMixin", "compat.SuperbThrowChunkMixin"
+  ],
+  "client": ["GuiNpcMenuMixin", "NpcAnimationMixin", "compat.BladeLayerPoseMixin", "compat.TaczAnimationAccess", "compat.TaczPoseMixin"],
+  "injectors": {"defaultRequire": 1}
+}
