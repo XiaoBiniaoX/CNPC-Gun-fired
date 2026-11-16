@@ -1,0 +1,18 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "bincnpc.gun.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "refmap": "refmap.cnpcgun.json",
+  "mixins": [
+    "ProjectileHitAccess",
+    "ProjectileFactoryAccess",
+    "CreativeTabAccess"
+  ],
+  "client": [
+    "client.BipedAnimationMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

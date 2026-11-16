@@ -1,0 +1,83 @@
+package bincnpc.gun.common.combat;
+
+import bincnpc.gun.common.npc.NpcAccess;
+import bincnpc.gun.gun.adapter.GunAdapter;
+import bincnpc.gun.slashblade.adapter.BladeAdapter;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.EnumHand;
+import net.minecraft.util.math.Vec3d;
+import net.minecraftforge.fml.common.Loader;
+import noppes.npcs.entity.EntityNPCInterface;
+
+public final class CombatMovement {
+    private CombatMovement() {}
+    private static boolean owns(CombatContext ctx) {
+        return ctx.runtime.adapter instanceof GunAdapter || ctx.runtime.adapter instanceof BladeAdapter || ctx.runtime.movement.meleeFallback || ctx.data.throwing.movementLocked();
+    }
+    public static boolean enhanced(EntityNPCInterface npc) {
+        if (!CombatService.serverThread(npc) || !(npc instanceof NpcAccess)) return false;
+        bincnpc.gun.common.npc.NpcData state = CombatService.data(npc);
+        return state.config.bool("combat.pathfinding") && state.config.bool("combat.enabled") && !state.runtime.editorPaused
+            && CombatService.validTarget(npc, npc.getAttackTarget())
+            && (state.runtime.adapter instanceof GunAdapter || state.runtime.adapter instanceof BladeAdapter || state.runtime.movement.meleeFallback || state.throwing.movementLocked());
+    }
+    public static void prepare(CombatContext ctx) {
+        if (Loader.isModLoaded("npcpathfindinglegacy")) bincnpc.gun.compat.pathfinding.PathfindingBridge.prepare(ctx, enhanced(ctx.npc));
+    }
+    public static void release(CombatContext ctx) {
+        if (Loader.isModLoaded("npcpathfindinglegacy")) bincnpc.gun.compat.pathfinding.PathfindingBridge.prepare(ctx, false);
+    }
+    public static double meleeReach(CombatContext ctx) {
+        return MathHelper.clamp(Math.max(ctx.config.number("weapon.meleeDistance"), ctx.npc.stats.melee.getRange()), 0.5, Math.min(32, ctx.config.number("combat.attackRange")));
+    }
+    public static void chase(CombatContext ctx) {
+        if (!ctx.data.throwing.movementLocked() && ctx.validTarget()) ctx.npc.getNavigator().tryMoveToEntityLiving(ctx.target, 1.15);
+    }
+    public static void tick(CombatContext ctx) {
+        if (!owns(ctx) || !ctx.validTarget() || !ctx.runtime.command.equals("AUTO") || ctx.data.throwing.movementLocked()) return;
+        MovementState move = ctx.runtime.movement;
+        boolean gun = ctx.runtime.adapter instanceof GunAdapter;
+        if (gun && !ctx.runtime.reloading && !CombatService.currentGunUsable(ctx)) {
+            if (move.pursueSlot >= 0) {
+                if (ctx.now >= move.nextMove) { chase(ctx); move.nextMove = ctx.now + 6; }
+            } else ctx.npc.getNavigator().clearPath();
+            return;
+        }
+        double preferred = gun ? Math.max(8, Math.min(18, ctx.config.number("gun.range") * 0.6)) : Math.max(1.5, meleeReach(ctx) * 0.65);
+        if (move.pursueSlot >= 0 || ctx.distance > (gun ? Math.min(ctx.config.number("gun.range"), ctx.config.number("combat.attackRange")) : meleeReach(ctx))) {
+            if (ctx.now >= move.nextMove) { chase(ctx); move.nextMove = ctx.now + 6; }
+            return;
+        }
+        if (!ctx.config.bool("combat.movement") || gun && !ctx.config.bool("gun.moveFire")
+                || ctx.now < ctx.runtime.maid.escapeUntil || ctx.now < move.nextMove || !ctx.npc.onGround) return;
+        move.nextMove = ctx.now + 10;
+        if ((ctx.now / 40 + ctx.npc.getEntityId()) % 3 == 0) move.side = -move.side;
+        Vec3d away = ctx.npc.getPositionVector().subtract(ctx.target.getPositionVector());
+        double length = Math.sqrt(away.x * away.x + away.z * away.z); if (length < 0.01) away = new Vec3d(1, 0, 0); else away = new Vec3d(away.x / length, 0, away.z / length);
+        Vec3d side = new Vec3d(-away.z * move.side, 0, away.x * move.side);
+        double radial = gun ? MathHelper.clamp((preferred - ctx.distance) * 0.22, -1.5, 2) : MathHelper.clamp((preferred - ctx.distance) * 0.2, -0.8, 0.8);
+        Vec3d destination = ctx.npc.getPositionVector().add(side.scale(gun ? 2.5 : 1.3)).add(away.scale(radial));
+        if (!ctx.npc.getNavigator().tryMoveToXYZ(destination.x, destination.y, destination.z, gun ? 1.05 : 1.1)) {
+            move.side = -move.side;
+            chase(ctx);
+        }
+    }
+    public static void melee(CombatContext ctx) {
+        if (!ctx.runtime.movement.meleeFallback || !ctx.validTarget() || !ctx.runtime.command.equals("AUTO") || ctx.runtime.scheduler.busy(ctx.now) || ctx.data.throwing.blocksAttack(ctx.now)) return;
+        if (ctx.distance > meleeReach(ctx)) { chase(ctx); return; }
+        if (ctx.now < ctx.runtime.movement.nextMelee || !ctx.npc.getEntitySenses().canSee(ctx.target)) return;
+        ctx.runtime.movement.nextMelee = ctx.now + Math.max(4, ctx.npc.stats.melee.getDelay());
+        face(ctx.npc);
+        ctx.npc.swingArm(EnumHand.MAIN_HAND);
+        ctx.npc.attackEntityAsMob(ctx.target);
+        CombatService.setState(ctx, "ATTACKING");
+    }
+    public static void face(EntityNPCInterface npc) {
+        if (!CombatService.serverThread(npc) || !(npc instanceof NpcAccess)) return;
+        CombatContext ctx = new CombatContext(npc);
+        if (!owns(ctx) || !ctx.validTarget() || !ctx.config.bool("combat.enabled") || ctx.runtime.editorPaused || !ctx.runtime.command.equals("AUTO")) return;
+        float yaw = ctx.yaw(), pitch = ctx.pitch();
+        npc.getLookHelper().setLookPosition(ctx.target.posX, bincnpc.gun.common.legacy.Platform.eyeY(ctx.target), ctx.target.posZ, 90, 90);
+        bincnpc.gun.common.legacy.Platform.yaw(npc, yaw); npc.rotationYawHead = yaw; npc.renderYawOffset = yaw; bincnpc.gun.common.legacy.Platform.pitch(npc, pitch);
+    }
+}

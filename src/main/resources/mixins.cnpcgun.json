@@ -1,0 +1,46 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "bincnpc.gun.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "refmap": "refmap.cnpcgun.json",
+  "plugin": "bincnpc.gun.CompatMixinPlugin",
+  "mixins": [
+    "NpcDataMixin",
+    "MeleeAiMixin",
+    "RangedAiMixin",
+    "ScriptGlobalsMixin",
+    "LinkedNpcMixin",
+    "ClonePortableMixin",
+    "compat.CgmThrowableAccess",
+    "compat.CgmThrowAccess",
+    "compat.TechgunsGunAccess",
+    "compat.TechgunsGrenadeAccess",
+    "compat.TechgunsProjectileAccess",
+    "compat.TechgunsGrenadeImpact",
+    "compat.TechgunsGrenadeMixin",
+    "compat.TechgunsProjectileMixin",
+    "compat.FlanGrenadeMixin",
+    "compat.SlashBladeDurabilityMixin",
+    "compat.SlashBladeReachMixin",
+    "compat.SlashBladeMeleeTargetsMixin",
+    "compat.SlashBladeRangedTargetsMixin",
+    "compat.SlashBladePhantomTargetsMixin",
+    "compat.SlashBladePhantomDamageMixin",
+    "compat.SlashBladeWitherBurstMixin",
+    "compat.SlashBladeDriveDamageMixin",
+    "compat.SlashBladeDimensionDamageMixin",
+    "compat.SlashBladeJudgmentMixin",
+    "compat.SlashBladeAddonTargetsMixin",
+    "compat.SlashBladeAddonDamageMixin",
+    "compat.SlashBladeAddonPhantomMixin",
+    "compat.SlashBladeAddonLightningMixin"
+  ],
+  "client": [
+    "GuiNpcMenuMixin",
+    "client.NpcModelAnimationMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

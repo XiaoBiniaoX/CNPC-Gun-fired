@@ -1,0 +1,7 @@
+[
+  {"mod":"tacz","id":"tacz","class":"bincnpc.gun.compat.tacz.TaczAdapter"},
+  {"mod":"cgm","id":"cgm","class":"bincnpc.gun.compat.cgm.CgmAdapter"},
+  {"mod":"techguns","id":"techguns","class":"bincnpc.gun.compat.techguns.TechgunsAdapter"},
+  {"mod":"flansmod","id":"flansmod","class":"bincnpc.gun.compat.flan.FlanAdapter"},
+  {"mod":"flammpfeil.slashblade","id":"slashblade","class":"bincnpc.gun.compat.slashblade.SlashBladeAdapter"}
+]
