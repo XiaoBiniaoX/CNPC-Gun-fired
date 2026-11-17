@@ -22,19 +22,18 @@ public final class ThrowFlights {
         final ThrowAdapter adapter;
         final ThrowAdapter.Profile profile;
         final Ballistics.Trajectory mode;
-        final Vec3 goal;
         final double speed, travel;
         final long started;
         int failures, waypoint;
         long nextRay, nextRoute, nextSync, routeStarted;
-        boolean direct;
+        boolean direct, nativePhysics;
         CollisionSnapshot.RouteCapture capture;
         ThrowPlanner.Ticket<List<Ballistics.Vec>> ticket;
         Ballistics.Vec routeOrigin, routeTarget;
         List<Ballistics.Vec> path = List.of();
         Flight(CombatContext ctx, Projectile projectile, ThrowAdapter adapter, ThrowAdapter.Profile profile, Ballistics.Candidate candidate, UUID target) {
             id = projectile.getUUID(); owner = ctx.npc.getUUID(); this.target = target; dimension = ctx.npc.level().dimension();
-            this.adapter = adapter; this.profile = profile; mode = candidate.mode(); goal = CollisionSnapshot.vector(candidate.goal());
+            this.adapter = adapter; this.profile = profile; mode = candidate.mode();
             speed = candidate.velocity().length(); travel = candidate.ticks(); started = ctx.now;
         }
         void cancelRoute() { if (ticket != null) ticket.cancel(); ticket = null; capture = null; path = List.of(); waypoint = 0; }
@@ -62,20 +61,22 @@ public final class ThrowFlights {
             long now = level.getGameTime();
             try {
                 if (now < flight.started || now - flight.started > Math.min(1200, flight.profile.life() + FAILURE_TICKS)) { detonate(flight, projectile); continue; }
-                if (flight.mode == Ballistics.Trajectory.TRACKING) tracking(level, flight, projectile, now);
+                if (flight.mode == Ballistics.Trajectory.TRACKING && !flight.nativePhysics) tracking(level, flight, projectile, now);
                 else {
-                    if (flight.mode == Ballistics.Trajectory.CURVE && flight.profile.customGravity())
+                    if (!flight.nativePhysics && flight.mode == Ballistics.Trajectory.STRAIGHT
+                            && (flight.profile.blastRadius() > 0 || flight.adapter.settleAtLanding(projectile))
+                            && (projectile.tickCount >= Math.ceil(flight.travel) || projectile.onGround())) handover(flight, projectile);
+                    if ((flight.mode == Ballistics.Trajectory.CURVE || flight.nativePhysics) && flight.profile.customGravity())
                         projectile.setDeltaMovement(projectile.getDeltaMovement().add(0, -flight.profile.gravity(), 0));
-                    // Bouncing explosives retain their native fuse/effect after arriving at the calculated landing area.
-                    if ((flight.profile.blastRadius() > 0 || flight.adapter.settleAtLanding(projectile)) && projectile.tickCount >= Math.ceil(flight.travel)
-                            && projectile.position().distanceToSqr(flight.goal) < Math.max(4, flight.profile.blastRadius() * flight.profile.blastRadius()))
-                        flight.adapter.guide(projectile, Vec3.ZERO);
-                    // Do not allow a missed native projectile to force terrain loading beyond its captured corridor.
-                    try {
-                        for (var cell : Ballistics.cells(CollisionSnapshot.vector(projectile.position()), CollisionSnapshot.vector(projectile.position().add(projectile.getDeltaMovement())), flight.profile.radius(), 1024))
-                            if (!CollisionSnapshot.loadedShape(level, new net.minecraft.core.BlockPos(cell.x(), cell.y(), cell.z()))) { flight.adapter.guide(projectile, Vec3.ZERO); break; }
-                    } catch (IllegalArgumentException tooLarge) { flight.adapter.guide(projectile, Vec3.ZERO); }
                 }
+                if (projectile.isRemoved()) { remove(flight); continue; }
+                // End at the loaded terrain boundary; never suspend a no-gravity projectile until its fuse explodes.
+                boolean loaded = true;
+                try {
+                    for (var cell : Ballistics.cells(CollisionSnapshot.vector(projectile.position()), CollisionSnapshot.vector(projectile.position().add(projectile.getDeltaMovement())), flight.profile.radius(), 1024))
+                        if (!CollisionSnapshot.loadedShape(level, new net.minecraft.core.BlockPos(cell.x(), cell.y(), cell.z()))) { loaded = false; break; }
+                } catch (IllegalArgumentException tooLarge) { loaded = false; }
+                if (!loaded) { projectile.discard(); remove(flight); continue; }
                 if (!projectile.isRemoved() && now >= flight.nextSync) { flight.nextSync = now + 5; flight.adapter.sync(projectile); }
             } catch (RuntimeException | LinkageError error) {
                 CNPCGun.LOGGER.warn("NPC throwable flight ended after adapter failure: {}", error.toString()); projectile.discard(); remove(flight);
@@ -90,6 +91,11 @@ public final class ThrowFlights {
             if (++f.failures >= FAILURE_TICKS) detonate(f, projectile); return;
         }
         Vec3 goal = living.getBoundingBox().getCenter();
+        boolean explosive = f.profile.blastRadius() > 0 || f.adapter.settleAtLanding(projectile);
+        if (projectile.getBoundingBox().inflate(explosive ? 0.75 : 0.15).intersects(living.getBoundingBox())) {
+            handover(f, projectile);
+            return;
+        }
         if (now >= f.nextRay) {
             f.nextRay = now + 4; f.direct = CollisionSnapshot.clear(level, projectile, projectile.position(), goal);
             if (f.direct) f.cancelRoute();
@@ -129,6 +135,14 @@ public final class ThrowFlights {
         }
         if (f.capture == null && f.ticket == null && now >= f.nextRoute) {
             f.routeStarted = now; f.nextRoute = now + 12; f.capture = new CollisionSnapshot.RouteCapture(level, projectile, goal);
+        }
+    }
+    private static void handover(Flight flight, Projectile projectile) {
+        flight.cancelRoute(); flight.adapter.restore(projectile, flight.profile); flight.nativePhysics = true;
+        if (flight.profile.gravity() > 0) {
+            Vec3 motion = projectile.getDeltaMovement();
+            // Keep the selected landing area while allowing gravity, native bounce and the fuse to continue.
+            projectile.setDeltaMovement(0, motion.y, 0);
         }
     }
     private static void remove(Flight flight) { flights.remove(flight.id); flight.cancelRoute(); }

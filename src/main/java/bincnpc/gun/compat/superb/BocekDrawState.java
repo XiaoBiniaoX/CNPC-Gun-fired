@@ -23,11 +23,19 @@ public final class BocekDrawState {
     }
 
     public boolean advance(long now, UUID target, long revision, long weaponEpoch, boolean allowed) {
+        return observe(now, target, revision, weaponEpoch, allowed, true);
+    }
+
+    public boolean pause(long now, UUID target, long revision, long weaponEpoch, boolean allowed) {
+        return observe(now, target, revision, weaponEpoch, allowed, false);
+    }
+
+    private boolean observe(long now, UUID target, long revision, long weaponEpoch, boolean allowed, boolean charging) {
         if (cancelled || releasing) return false;
         if (!allowed || !matches(target, revision, weaponEpoch) || now < observedTick || now - observedTick > 1) {
             cancel(); return false;
         }
-        if (now != observedTick) { ticks = Math.min(FULL_DRAW_TICKS, ticks + 1); observedTick = now; }
+        if (now != observedTick) { if (charging) ticks = Math.min(FULL_DRAW_TICKS, ticks + 1); observedTick = now; }
         return true;
     }
 

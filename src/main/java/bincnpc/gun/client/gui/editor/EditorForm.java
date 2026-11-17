@@ -2,6 +2,7 @@ package bincnpc.gun.client.gui.editor;
 
 import bincnpc.gun.client.gui.GuiSupport;
 import bincnpc.gun.common.config.Parameter;
+import bincnpc.gun.common.config.ConfigSchema;
 import com.google.gson.*;
 import java.util.*;
 import java.util.function.*;
@@ -124,12 +125,15 @@ public final class EditorForm extends AbstractWidget {
         }); toggle.setTooltip(Tooltip.create(Component.translatable(flag.label)));
         field.controls.add(0, toggle); field.updateLabel(); fields.add(field); layout(); return this;
     }
-    public boolean invalid() { return fields.stream().anyMatch(field -> field.invalid && (!field.combined || field.flagValue)); }
+    private boolean numberEditable(Field field) {
+        return !field.combined || field.flagValue || ConfigSchema.isGunSetting(field.parameter.id) || field.parameter.id.startsWith("weapon.");
+    }
+    public boolean invalid() { return fields.stream().anyMatch(field -> field.invalid && numberEditable(field)); }
     public boolean editing() { return isFocused() && focusedControl instanceof EditorTextField; }
     public int scrollOffset() { return scroll; }
     public Map<String, List<String>> invalidText() {
         Map<String, List<String>> raw = new HashMap<>();
-        for (Field field : fields) if (field.parameter != null && field.invalid && (!field.combined || field.flagValue))
+        for (Field field : fields) if (field.parameter != null && field.invalid && numberEditable(field))
             raw.put(field.parameter.id, field.controls.stream().filter(control -> control instanceof EditorTextField).map(control -> ((EditorTextField)control).getValue()).toList());
         return raw;
     }
@@ -166,6 +170,10 @@ public final class EditorForm extends AbstractWidget {
     private String hint(Field field) {
         if (!field.available.getAsBoolean()) return field.reason;
         Parameter p = field.parameter;
+        if (p.id.equals("combat.disableFriendlyFire")) return GuiSupport.tr("cnpcgun.editor.friendlyFireHint");
+        if (p.id.equals("gun.prefire")) return GuiSupport.tr("cnpcgun.editor.prefireHint");
+        if (p.id.equals("gun.overrideNativeRate")) return GuiSupport.tr("cnpcgun.editor.nativeRateHint");
+        if (p.id.equals("gun.disableIdleAnimation")) return GuiSupport.tr("cnpcgun.editor.idleGunAnimationHint");
         if (p.min != null) {
             double scale = percentage(p) ? 100 : 1;
             return displayNumber(new JsonPrimitive(p.min * scale), false) + " – " + displayNumber(new JsonPrimitive(p.max * scale), false) + " " + unit(p);
@@ -220,7 +228,7 @@ public final class EditorForm extends AbstractWidget {
             boolean components = field.controls.size() > 1 && !field.combined && !field.segmented;
             int labelWidth = field.segmented ? field.box.width() - 8 : components ? field.box.width() / 2 - 8 : field.controls.get(0).getX() - field.box.x() - 10;
             EditorStyle.text(g, font, fieldLabel(field), field.box.x() + 2, field.box.y() + (compactSlots ? 4 : 5), labelWidth, enabled ? EditorStyle.INK : EditorStyle.MUTED);
-            if (!field.segmented) EditorStyle.text(g, font, field.invalid && (!field.combined || field.flagValue) ? GuiSupport.tr("cnpcgun.editor.invalidField") : hint(field),
+            if (!field.segmented) EditorStyle.text(g, font, field.invalid && numberEditable(field) ? GuiSupport.tr("cnpcgun.editor.invalidField") : hint(field),
                 field.box.x() + (components ? field.box.width() / 2 : 2), field.box.y() + (components ? 5 : compactSlots ? 15 : 18),
                 components ? field.box.width() / 2 - 4 : labelWidth, field.invalid ? EditorStyle.RED : EditorStyle.MUTED);
             if (components) for (int i = 0; i < field.controls.size(); i++) {
@@ -231,7 +239,7 @@ public final class EditorForm extends AbstractWidget {
             g.hLine(field.box.x(), field.box.right() - 6, field.box.bottom() - 1, EditorStyle.LINE);
             for (AbstractWidget control : field.controls) {
                 boolean controlEnabled = enabled && (!field.segmented || !((EditorButton)control).selected)
-                    && (!field.combined || control == field.controls.get(0) || field.flagValue);
+                    && (control == field.controls.get(0) || numberEditable(field));
                 control.active = controlEnabled; if (control instanceof EditorTextField input) input.setEditable(controlEnabled);
                 control.render(g, mouseX, mouseY, partialTick);
             }
@@ -247,9 +255,14 @@ public final class EditorForm extends AbstractWidget {
             for (Field field : fields) if (field.parameter != null && inViewport(field) && field.box.contains(mouseX, mouseY)
                 && (field.controls.size() > 1 && mouseY < field.box.y() + 20 || mouseX < field.controls.get(0).getX() - 4 || !field.available.getAsBoolean())) {
                 String label = fieldLabel(field);
-                if (!field.available.getAsBoolean()) label += "\n" + field.reason;
-                if (font.width(label) > (field.controls.size() > 1 ? field.box.width() / 2 - 8 : field.controls.get(0).getX() - field.box.x() - 10) || !field.available.getAsBoolean())
-                    setTooltip(Tooltip.create(Component.literal(label)));
+                String description = field.invalid && numberEditable(field)
+                    ? GuiSupport.tr("cnpcgun.editor.invalidField") : hint(field);
+                boolean components = field.controls.size() > 1 && !field.combined && !field.segmented;
+                int labelWidth = field.segmented ? field.box.width() - 8 : components ? field.box.width() / 2 - 8
+                    : field.controls.get(0).getX() - field.box.x() - 10;
+                int hintWidth = components ? field.box.width() / 2 - 4 : labelWidth;
+                if (field.parameter.id.equals("gun.prefire") || font.width(label) > labelWidth || !field.segmented && font.width(description) > hintWidth || !field.available.getAsBoolean())
+                    setTooltip(Tooltip.create(Component.literal(label + (description.isEmpty() ? "" : "\n" + description))));
             }
         }
     }
@@ -262,7 +275,7 @@ public final class EditorForm extends AbstractWidget {
         layout();
         for (Field field : fields) if (field.parameter != null && inViewport(field) && !locked && field.available.getAsBoolean())
             for (AbstractWidget control : field.controls) if ((!field.segmented || !((EditorButton)control).selected)
-                    && (!field.combined || control == field.controls.get(0) || field.flagValue) && control.mouseClicked(x, y, button)) { focus(control); return true; }
+                    && (control == field.controls.get(0) || numberEditable(field)) && control.mouseClicked(x, y, button)) { focus(control); return true; }
         focus(null); return true;
     }
     @Override public boolean mouseReleased(double x, double y, int button) { return focusedControl != null && focusedControl.mouseReleased(x, y, button); }

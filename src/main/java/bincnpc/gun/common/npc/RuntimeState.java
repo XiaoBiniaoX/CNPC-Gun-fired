@@ -11,9 +11,14 @@ import net.minecraft.world.item.ItemStack;
 
 public final class RuntimeState {
     public final bincnpc.gun.common.combat.MovementState movement = new bincnpc.gun.common.combat.MovementState();
+    public final bincnpc.gun.gun.controller.RecoilState recoil = new bincnpc.gun.gun.controller.RecoilState();
     public long lastTick = Long.MIN_VALUE, nextDecision, nextShot, noAmmoRetry, nextSwitch, lastSupply,
         firstTargetTick, lastHurt = -1000, nextTargetScan, actionEnd;
     public long inventoryFingerprint, nextCapabilityCheck, nextAnimationSummary, lastFired = -1000;
+    public long gunAnimationUntil;
+    public long nextFireAttempt, firingRevision = -1;
+    public bincnpc.gun.gun.controller.FireTiming.Settings firingSettings;
+    public bincnpc.gun.gun.controller.FireTiming.Plan pendingShotTiming;
     public long weaponEpoch, decisionCycle = Long.MIN_VALUE;
     public bincnpc.gun.common.combat.CombatDecisions.Ticket decisionTicket;
     public bincnpc.gun.common.combat.CombatDecisions.Advice decisionAdvice;
@@ -21,7 +26,7 @@ public final class RuntimeState {
     public boolean restoreSupplies = true, editorPaused;
     public float shotYawOffset, shotPitchOffset;
     public String animationSummary = "";
-    public int burstRemaining, shotStreak, reloadTargetTicks;
+    public int burstRemaining, shotStreak, reloadTargetTicks, shotInterval, lastShotInterval;
     public long reloadStarted;
     public boolean reloadObserved;
     public boolean fireStopped, reloading, ammoEmpty, noAmmoEvent, aiming;

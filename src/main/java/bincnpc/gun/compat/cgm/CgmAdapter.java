@@ -19,10 +19,9 @@ import java.util.*;
 
 public final class CgmAdapter implements GunAdapter {
     private static final class State {
-        long nextShot, nextLoad, reloadStart;
+        long nextLoad, reloadStart;
         int reloadDuration, reloadSteps, loadedSteps;
         boolean reloading, aim;
-        double recoil;
     }
     private State state(CombatContext ctx) { return (State)ctx.runtime.adapterState.computeIfAbsent(id(), key -> new State()); }
     private Gun gun(ItemStack stack) { return ((GunItem)stack.getItem()).getModifiedGun(stack); }
@@ -50,7 +49,7 @@ public final class CgmAdapter implements GunAdapter {
         c.supportsBurst = true; c.supportsAutomaticFire = true; c.supportsSingleShot = true;
         c.firingModes = new String[]{"NATIVE", "SINGLE", "SEMI", "AUTO", "BURST", "CUSTOM"};
         c.projectileModel = "CUSTOM_PROJECTILE";
-        return c;
+        return c.withNpcControls();
     }
     @Override public Views.AmmoState ammo(CombatContext ctx) {
         Gun nativeGun = gun(ctx.weapon); boolean infinite = infinite(ctx);
@@ -71,13 +70,11 @@ public final class CgmAdapter implements GunAdapter {
     @Override public Result fire(CombatContext ctx) {
         State s = state(ctx);
         if (s.reloading) return Result.fail("BUSY");
-        if (ctx.now < s.nextShot) return Result.fail("COOLDOWN");
         if (!infinite(ctx) && ctx.weapon.getOrCreateTag().getInt("AmmoCount") <= 0) return Result.fail("NO_AMMO");
         Gun nativeGun = gun(ctx.weapon).copy();
         CompoundTag general = nativeGun.getGeneral().serializeNBT();
         general.putFloat("Spread", (float)Math.min(ctx.config.number("gun.maxSpread"), nativeGun.getGeneral().getSpread() * ctx.spreadMultiplier()));
         nativeGun.getGeneral().deserializeNBT(general);
-        ctx.npc.setXRot((float)Math.max(-90, Math.min(90, ctx.pitch() + s.recoil)));
         int count = Math.min(64, Math.max(1, nativeGun.getGeneral().getProjectileAmount()));
         List<ProjectileEntity> projectiles = new ArrayList<>();
         var factory = ProjectileManager.getInstance().getFactory(nativeGun.getProjectile().getItem());
@@ -88,7 +85,7 @@ public final class CgmAdapter implements GunAdapter {
             projectile.setWeapon(ctx.weapon); projectile.setAdditionalDamage(Gun.getAdditionalDamage(ctx.weapon));
             if (!ctx.npc.level().addFreshEntity(projectile)) continue;
             projectiles.add(projectile);
-            if (projectiles.size() == 1) commitShot(ctx, s, nativeGun);
+            if (projectiles.size() == 1) commitShot(ctx);
             projectile.tick();
         }
         if (projectiles.isEmpty()) return Result.fail("INTERNAL_ERROR");
@@ -99,15 +96,13 @@ public final class CgmAdapter implements GunAdapter {
         sound(ctx, nativeGun, false);
         return Result.success();
     }
-    private void commitShot(CombatContext ctx, State s, Gun nativeGun) {
+    private void commitShot(CombatContext ctx) {
         if (!infinite(ctx)) {
             int level = net.minecraft.world.item.enchantment.EnchantmentHelper.getItemEnchantmentLevel(com.mrcrayfish.guns.init.ModEnchantments.RECLAIMED.get(), ctx.weapon);
             if (level == 0 || ctx.npc.getRandom().nextInt(4 - Math.max(1, Math.min(2, level))) != 0)
                 ctx.weapon.getOrCreateTag().putInt("AmmoCount", Math.max(0, ctx.weapon.getOrCreateTag().getInt("AmmoCount") - 1));
         }
-        s.nextShot = ctx.now + (ctx.config.bool("gun.overrideNativeRate")
-            ? Math.max(1, (int)Math.ceil(ctx.config.integer("gun.fireInterval") / ctx.config.number("gun.fireRateMultiplier"))) : baseInterval(ctx.weapon));
-        if (ctx.config.bool("gun.applyRecoil")) s.recoil += nativeGun.getGeneral().getRecoilAngle() * ctx.config.number("gun.recoilMultiplier");
+        // GunController owns the shot deadline, including the native rate when no override is enabled.
         ctx.npc.updateClient = true;
     }
     private void sound(CombatContext ctx, Gun gun, boolean reload) {
@@ -132,7 +127,7 @@ public final class CgmAdapter implements GunAdapter {
         sound(ctx, gun(ctx.weapon), true); return Result.success();
     }
     @Override public void tick(CombatContext ctx) {
-        State s = state(ctx); s.recoil *= 0.75;
+        State s = state(ctx);
         if (!s.reloading || ctx.now < s.nextLoad) return;
         Gun nativeGun = gun(ctx.weapon);
         int cap = GunEnchantmentHelper.getAmmoCapacity(ctx.weapon, nativeGun), count = ctx.weapon.getOrCreateTag().getInt("AmmoCount");

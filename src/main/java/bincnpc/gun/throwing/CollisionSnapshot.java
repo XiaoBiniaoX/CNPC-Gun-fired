@@ -20,11 +20,13 @@ public final class CollisionSnapshot {
     private final Ballistics.Request request;
     private final List<Ballistics.Candidate> candidates;
     private final List<Ballistics.Cell> cells;
+    private final boolean safeDistance;
     private final List<Ballistics.Bounds> walls = new ArrayList<>();
     private int cursor;
     private boolean failed;
-    public CollisionSnapshot(ServerLevel level, EntityNPCInterface owner, Ballistics.Request request, List<Ballistics.Candidate> candidates) {
+    public CollisionSnapshot(ServerLevel level, EntityNPCInterface owner, Ballistics.Request request, List<Ballistics.Candidate> candidates, boolean safeDistance) {
         this.level = level; this.owner = owner; this.request = request; this.candidates = List.copyOf(candidates);
+        this.safeDistance = safeDistance;
         LinkedHashSet<Ballistics.Cell> cells = new LinkedHashSet<>();
         for (var candidate : candidates) for (int i = 1; i < candidate.points().size(); i++) {
             for (var cell : Ballistics.cells(candidate.points().get(i - 1), candidate.points().get(i), request.physics().radius(), MAX_CELLS)) {
@@ -55,7 +57,7 @@ public final class CollisionSnapshot {
     }
     public Ballistics.World result() {
         if (failed || cursor < cells.size()) return null;
-        List<Ballistics.Bounds> danger = danger(level, owner, request.target(), request.physics().blast());
+        List<Ballistics.Bounds> danger = safeDistance ? danger(level, owner, request.target(), request.physics().blast()) : List.of();
         return danger == null ? null : new Ballistics.World(request, candidates, walls, danger);
     }
     public static Ballistics.Vec vector(Vec3 v) { return new Ballistics.Vec(v.x, v.y, v.z); }
@@ -78,7 +80,7 @@ public final class CollisionSnapshot {
     }
     private static void requireThread(ServerLevel level) { if (!level.getServer().isSameThread()) throw new IllegalStateException("main-thread terrain capture"); }
 
-    /** Blast safety is independent of the user's minimum throwing range. */
+    /** SAFE timing checks blast clearance in addition to the configured throwing range. */
     private static List<Ballistics.Bounds> danger(ServerLevel level, EntityNPCInterface owner, Ballistics.Vec goal, double blast) {
         requireThread(level); if (blast <= 0) return List.of();
         List<Ballistics.Bounds> result = new ArrayList<>(); result.add(bounds(owner.getBoundingBox().inflate(blast + 0.35)));

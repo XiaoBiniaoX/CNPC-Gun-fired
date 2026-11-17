@@ -20,7 +20,7 @@ import noppes.npcs.entity.EntityNPCInterface;
 @Mod(CNPCGun.MOD_ID)
 public final class CNPCGun {
     public static final String MOD_ID = "cnpcgun";
-    public static final String VERSION = "1.0.0";
+    public static final String VERSION = "1.1.0";
     public static final String API_VERSION = "1";
     public static final Logger LOGGER = LogUtils.getLogger();
 
@@ -43,7 +43,7 @@ public final class CNPCGun {
         if (event.getEntity() instanceof ServerPlayer player && event.getTarget() instanceof EntityNPCInterface npc && CombatService.validNpc(npc)) {
             CombatContext ctx = new CombatContext(npc);
             GunNetwork.CHANNEL.send(net.minecraftforge.network.PacketDistributor.PLAYER.with(() -> player),
-                new GunNetwork.Animation(npc.getId(), npc.getUUID(), ctx.runtime.domain, "STATE", "", 25, ctx.runtime.aiming));
+                new GunNetwork.Animation(npc.getId(), npc.getUUID(), ctx.runtime.domain, GunNetwork.statePose(ctx), "", 25, ctx.runtime.aiming));
         }
     }
     private void serverStarted(ServerStartedEvent event) {
@@ -68,6 +68,8 @@ public final class CNPCGun {
     private void tick(LivingEvent.LivingTickEvent event) {
         if (event.getEntity() instanceof EntityNPCInterface npc && !npc.level().isClientSide) {
             CombatService.tick(npc);
+            if (AdapterRegistry.ready() && CombatService.serverThread(npc) && CombatService.validNpc(npc))
+                GunNetwork.summary(new CombatContext(npc));
         }
     }
     private void serverTick(net.minecraftforge.event.TickEvent.ServerTickEvent event) {
@@ -81,12 +83,6 @@ public final class CNPCGun {
     private void hurt(LivingHurtEvent event) {
         if (event.getEntity() instanceof EntityNPCInterface npc && !npc.level().isClientSide) {
             CombatService.data(npc).runtime.lastHurt = npc.level().getGameTime();
-        }
-        // Native projectiles and area attacks still respect CNPC factions and ownership.
-        if (event.getSource().getEntity() instanceof EntityNPCInterface owner
-                && (CombatService.isControlled(owner) || bincnpc.gun.throwing.ThrowFlights.owned(event.getSource().getDirectEntity(), owner))
-                && !CombatService.validTarget(owner, event.getEntity())) {
-            event.setCanceled(true);
         }
     }
     private void death(LivingDeathEvent event) {

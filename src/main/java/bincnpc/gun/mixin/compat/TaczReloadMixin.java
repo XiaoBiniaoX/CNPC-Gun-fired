@@ -3,6 +3,7 @@ package bincnpc.gun.mixin.compat;
 import bincnpc.gun.common.combat.CombatContext;
 import bincnpc.gun.common.combat.CombatService;
 import bincnpc.gun.compat.tacz.TaczAdapter;
+import bincnpc.gun.compat.tacz.TaczTime;
 import bincnpc.gun.gun.controller.ReloadTiming;
 import com.tacz.guns.entity.shooter.LivingEntityReload;
 import com.tacz.guns.entity.shooter.ShooterDataHolder;
@@ -23,7 +24,7 @@ public abstract class TaczReloadMixin {
     @Unique private long cnpcgun$weaponEpoch;
     @Unique private double cnpcgun$speed;
 
-    @Inject(method = "reload", at = @At("RETURN"))
+    @Inject(method = "reload()V", at = @At("RETURN"))
     private void cnpcgun$beginReload(CallbackInfo ci) {
         cnpcgun$clock = null; cnpcgun$stack = null;
         if (!(shooter instanceof EntityNPCInterface npc) || !CombatService.serverThread(npc) || !CombatService.validNpc(npc)
@@ -36,9 +37,10 @@ public abstract class TaczReloadMixin {
         if (cnpcgun$stack == null || cnpcgun$stack != ctx.weapon) { cnpcgun$stack = null; return; }
         cnpcgun$weaponEpoch = ctx.runtime.weaponEpoch;
         cnpcgun$speed = ReloadTiming.speed(number.doubleValue(), ctx.runtime.reloadTargetTicks);
-        cnpcgun$clock = new ReloadTiming.Clock(ctx.now, System.currentTimeMillis());
+        long nativeNow = TaczTime.nowMillis();
+        if (nativeNow >= 0) cnpcgun$clock = new ReloadTiming.Clock(ctx.now, nativeNow);
     }
-    @Inject(method = "tickReloadState", at = @At("HEAD"))
+    @Inject(method = "tickReloadState()Lcom/tacz/guns/api/entity/ReloadState;", at = @At("HEAD"))
     private void cnpcgun$advanceReload(CallbackInfoReturnable<ReloadState> cir) {
         if (cnpcgun$clock == null) return;
         if (!(shooter instanceof EntityNPCInterface npc) || !CombatService.serverThread(npc) || !CombatService.validNpc(npc)
@@ -49,6 +51,8 @@ public abstract class TaczReloadMixin {
         if (!(ctx.runtime.adapter instanceof TaczAdapter) || ctx.runtime.weaponEpoch != cnpcgun$weaponEpoch || ctx.runtime.editorPaused) {
             cnpcgun$clock = null; cnpcgun$stack = null; return;
         }
-        data.reloadTimestamp = cnpcgun$clock.adjust(data.reloadTimestamp, ctx.now, System.currentTimeMillis(), cnpcgun$speed);
+        long nativeNow = TaczTime.nowMillis();
+        if (nativeNow < 0) { cnpcgun$clock = null; cnpcgun$stack = null; return; }
+        data.reloadTimestamp = cnpcgun$clock.adjust(data.reloadTimestamp, ctx.now, nativeNow, cnpcgun$speed);
     }
 }

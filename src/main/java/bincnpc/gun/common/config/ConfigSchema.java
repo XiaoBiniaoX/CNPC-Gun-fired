@@ -6,7 +6,7 @@ import java.util.*;
 public final class ConfigSchema {
     private static final Map<String, Parameter> FIELDS = new LinkedHashMap<>();
     static {
-        add(bool("combat.enabled", true), number("combat.attackRange", 32, 1, 128),
+        add(bool("combat.enabled", true), bool("combat.disableFriendlyFire", true), number("combat.attackRange", 32, 1, 128),
             bool("combat.movement", true), bool("combat.pathfinding", true),
             bool("combat.stopOnInvalidTarget", true), bool("combat.allowTargetChange", true),
             integer("combat.decisionInterval", 10, 4, 100),
@@ -55,7 +55,7 @@ public final class ConfigSchema {
             integer("ammo.minimumReserve", 0, 0, 100000),
             integer("ammo.supplyCooldown", 20, 0, 1200),
             bool("ammo.allowExternalSupply", true), bool("ammo.allowScriptSupply", true),
-            bool("ammo.infinite", false), integer("ammo.defaultReserve", 300, 0, 100000),
+            bool("ammo.infinite", false), bool("gun.disableIdleAnimation", false), integer("ammo.defaultReserve", 300, 0, 100000),
             bool("ammo.killSupply", false), integer("ammo.killReward", 30, 0, 100000), bool("ammo.dropSupply", false),
             choice("ammo.noAmmoBehavior", "SWITCH_WEAPON", "SWITCH_WEAPON", "SWITCH_TO_MELEE", "RETREAT", "HOLD_POSITION", "DELEGATE"),
             choice("slashblade.preset", "BEGINNER", "BEGINNER", "NORMAL", "CUSTOM", "MAID").requires("slashblade.attack"),
@@ -93,7 +93,11 @@ public final class ConfigSchema {
         }
     }
     private ConfigSchema() {}
-    private static void add(Parameter... parameters) { for (Parameter p : parameters) FIELDS.put(p.id, p); }
+    /** Settings can be prepared for any weapon; native capabilities only gate actual combat actions. */
+    public static boolean isGunSetting(String key) { return key != null && (key.startsWith("gun.") || key.startsWith("ammo.")); }
+    private static void add(Parameter... parameters) {
+        for (Parameter p : parameters) FIELDS.put(p.id, isGunSetting(p.id) ? p.requires("") : p);
+    }
     public static Parameter get(String key) { return FIELDS.get(key); }
     public static Parameter[] all() { return FIELDS.values().toArray(Parameter[]::new); }
 }

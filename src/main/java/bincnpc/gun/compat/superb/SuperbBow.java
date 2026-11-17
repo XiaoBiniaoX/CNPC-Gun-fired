@@ -38,7 +38,7 @@ final class SuperbBow {
         if (!CombatService.serverThread(ctx.npc) || !CombatService.validNpc(ctx.npc) || !ctx.validTarget()
                 || ctx.npc.isPassenger() || ctx.runtime.editorPaused || ctx.runtime.fireStopped
                 || !ctx.config.bool("combat.enabled") || !ctx.config.bool("gun.enabled")
-                || ctx.runtime.reloading || gun.reloading() || ctx.data.throwing.blocksAttack(ctx.now)
+                || ctx.runtime.reloading || gun.reloading()
                 || ctx.runtime.movement.ammoFallback || !matches(gun) || gun.stack != ctx.weapon
                 || !(ctx.runtime.adapter instanceof SuperbAdapter) || ctx.runtime.lastStack != ctx.weapon
                 || ctx.npc.inventory == null || ItemStackWrapper.MCItem(ctx.npc.inventory.getRightHand()) != ctx.weapon
@@ -46,20 +46,26 @@ final class SuperbBow {
         double distance = ctx.npc.distanceTo(ctx.target);
         if (distance > Math.min(ctx.config.number("gun.range"), ctx.config.number("combat.attackRange"))
                 || distance < ctx.config.number("gun.minRange")) return false;
-        if (!ctx.npc.getSensing().hasLineOfSight(ctx.target) && ctx.config.text("gun.prefire").equals("NONE")) return false;
+        if (!ctx.npc.getSensing().hasLineOfSight(ctx.target) && !ctx.canFireWithoutSight()) return false;
         return ctx.npc.onGround() || ctx.config.bool("gun.jumpFire") && ctx.runtime.gunCaps != null && ctx.runtime.gunCaps.canJumpFire;
     }
     static void tick(CombatContext ctx, GunData gun) {
         BocekDrawState state = draw(ctx);
-        if (state != null && !state.advance(ctx.now, ctx.target == null ? null : ctx.target.getUUID(),
-                ctx.config.revision, ctx.runtime.weaponEpoch, allowed(ctx, gun) && gun.canShoot(ctx.npc))) cancel(ctx);
+        if (state == null) return;
+        boolean allowed = allowed(ctx, gun) && gun.canShoot(ctx.npc);
+        var target = ctx.target == null ? null : ctx.target.getUUID();
+        boolean valid = ctx.data.throwing.pausesCharge()
+            ? state.pause(ctx.now, target, ctx.config.revision, ctx.runtime.weaponEpoch, allowed)
+            : state.advance(ctx.now, target, ctx.config.revision, ctx.runtime.weaponEpoch, allowed && !ctx.data.throwing.blocksAttack(ctx.now));
+        if (!valid) cancel(ctx);
     }
     private static boolean validRelease(CombatContext ctx, GunData gun, BocekDrawState state) {
-        return draw(ctx) == state && state.releasing() && allowed(ctx, gun)
+        return draw(ctx) == state && state.releasing() && !ctx.data.throwing.blocksAttack(ctx.now) && allowed(ctx, gun)
             && state.matches(ctx.target.getUUID(), ctx.config.revision, ctx.runtime.weaponEpoch) && gun.canShoot(ctx.npc);
     }
     static Result fire(CombatContext ctx, GunData gun) {
-        if (!allowed(ctx, gun) || !gun.canShoot(ctx.npc)) { cancel(ctx); return Result.fail("BUSY"); }
+        if (ctx.data.throwing.pausesCharge()) return Result.fail("BUSY");
+        if (!allowed(ctx, gun) || !gun.canShoot(ctx.npc) || ctx.data.throwing.blocksAttack(ctx.now)) { cancel(ctx); return Result.fail("BUSY"); }
         BocekDrawState state = draw(ctx);
         if (state != null && state.releasing()) return Result.fail("BUSY");
         if (state != null && !state.advance(ctx.now, ctx.target.getUUID(), ctx.config.revision, ctx.runtime.weaponEpoch, true)) {

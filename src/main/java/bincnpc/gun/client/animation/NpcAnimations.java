@@ -42,9 +42,8 @@ public final class NpcAnimations {
         var level = Minecraft.getInstance().level;
         if (level == null || !(level.getEntity(packet.entityId()) instanceof EntityNPCInterface npc) || !npc.getUUID().equals(packet.npcId())) return;
         WeaponAnimation animation = ANIMATIONS.computeIfAbsent(npc, WeaponAnimation::new);
-        if (packet.pose().equals("STATE")) {
-            if (!animation.domain.equals(packet.domain())) animation.nativeBlade = null;
-            animation.domain = packet.domain(); animation.aiming = packet.aiming(); animation.summaryAge = 0;
+        if (packet.pose().equals("STATE") || packet.pose().equals("STATE_IDLE")) {
+            animation.state(packet.domain(), packet.aiming(), packet.pose().equals("STATE_IDLE"));
         } else {
             animation.start(packet.domain(), packet.pose(), packet.actionId(), packet.duration(), packet.aiming());
             if (packet.domain().equals("SLASHBLADE") && packet.actionId().startsWith("combo:") && ModList.get().isLoaded("slashblade")) {
@@ -83,6 +82,7 @@ public final class NpcAnimations {
     public static void restore(EntityModel<?> model) { if (model instanceof HumanoidModel<?> humanoid) { List<PartPose> saved = SAVED_POSES.remove(humanoid); if (saved != null) saved.forEach(PartPose::restore); } }
     public static boolean nativeRoot(EntityNPCInterface npc) { WeaponAnimation animation = ANIMATIONS.get(npc); return animation != null && animation.nativeActive(); }
     public static boolean nativeGun(EntityNPCInterface npc) { WeaponAnimation animation = ANIMATIONS.get(npc); return animation != null && animation.gunAnimation() != null; }
+    public static boolean idleGun(EntityNPCInterface npc) { WeaponAnimation animation = ANIMATIONS.get(npc); return animation != null && animation.summaryAge < 45 && animation.idleGun(); }
     public static void root(EntityNPCInterface npc, PoseStack pose, float partialTick) {
         WeaponAnimation animation = ANIMATIONS.get(npc); if (animation == null || !animation.nativeActive()) return;
         animation.processor.setTickDelta(partialTick);
@@ -105,19 +105,28 @@ public final class NpcAnimations {
         IAnimation nativeBlade;
         IAnimation nativeGunAction, nativeGunLoop;
         String gunLoopKey = "";
-        boolean aiming;
+        boolean aiming, idle;
         int age = 1000, duration = 1, summaryAge = 1000, direction = 1;
         int phantomAge = 1000, phantomDuration = 1, guardAge = 1000, guardDuration = 1;
         int throwAge = 1000, throwDuration = 1;
-        boolean throwRelease;
+        boolean throwRelease, throwHolding;
         float delta;
         WeaponAnimation(EntityNPCInterface npc) { this.npc = new WeakReference<>(npc); }
+        void state(String domain, boolean aiming, boolean idle) {
+            if (!this.domain.equals(domain)) {
+                nativeBlade = null; nativeGunAction = nativeGunLoop = null; gunLoopKey = "";
+                age = phantomAge = guardAge = 1000; pose = "";
+            }
+            this.domain = domain; this.aiming = aiming; this.idle = idle; summaryAge = 0;
+            if (idle) { nativeGunLoop = null; gunLoopKey = ""; }
+        }
         void start(String domain, String pose, String id, int duration, boolean aiming) {
             if (!this.domain.equals(domain)) { nativeBlade = null; nativeGunAction = nativeGunLoop = null; gunLoopKey = ""; phantomAge = guardAge = 1000; }
-            this.domain = domain; this.aiming = aiming; summaryAge = 0;
-            if (pose.equals("THROW_END")) { throwAge = 1000; return; }
-            if (pose.equals("THROW") || pose.equals("THROW_RELEASE")) {
-                throwAge = 0; throwDuration = Mth.clamp(duration, 1, 220); throwRelease = pose.equals("THROW_RELEASE"); return;
+            this.domain = domain; this.aiming = aiming; idle = false; summaryAge = 0;
+            if (pose.equals("THROW_END")) { throwAge = 1000; throwHolding = false; return; }
+            if (pose.equals("THROW") || pose.equals("THROW_HOLD") || pose.equals("THROW_RELEASE")) {
+                throwAge = 0; throwDuration = Mth.clamp(duration, 1, 220); throwRelease = pose.equals("THROW_RELEASE");
+                throwHolding = pose.equals("THROW_HOLD"); return;
             }
             if (domain.equals("SLASHBLADE") && pose.equals("PHANTOM_SWORD")) { phantomAge = 0; phantomDuration = Mth.clamp(duration, 4, 100); return; }
             if (domain.equals("SLASHBLADE") && pose.equals("DEFENSE") && !id.startsWith("combo:")) { guardAge = 0; guardDuration = Mth.clamp(duration, 4, 100); return; }
@@ -139,15 +148,20 @@ public final class NpcAnimations {
             }
         }
         boolean nativeActive() { return throwAge >= throwDuration + 4 && domain.equals("SLASHBLADE") && nativeBlade != null && nativeBlade.isActive() && age < duration + 4; }
+        boolean idleGun() {
+            boolean action = pose.equals("FIRE") || pose.equals("RELOAD") || pose.equals("MELEE");
+            return domain.equals("GUN") && idle && (!action || age >= duration + 4);
+        }
         IAnimation gunAnimation() {
-            if (!domain.equals("GUN") || summaryAge >= 45) return null;
+            if (!domain.equals("GUN") || summaryAge >= 45 || idleGun()) return null;
             return nativeGunAction != null && nativeGunAction.isActive() ? nativeGunAction : nativeGunLoop != null && nativeGunLoop.isActive() ? nativeGunLoop : null;
         }
         @Override public void tick() {
             age++; summaryAge++; phantomAge++; guardAge++; throwAge++;
             if (nativeBlade != null) nativeBlade.tick();
+            if (idleGun()) nativeGunAction = null;
             if (nativeGunAction != null) nativeGunAction.tick();
-            if (domain.equals("GUN") && summaryAge < 45 && ModList.get().isLoaded("tacz") && npc.get() != null) {
+            if (domain.equals("GUN") && !idle && summaryAge < 45 && ModList.get().isLoaded("tacz") && npc.get() != null) {
                 try {
                     String key = TaczNativeAnimations.loopKey(npc.get(), aiming);
                     if (!key.equals(gunLoopKey) || nativeGunLoop == null || !nativeGunLoop.isActive()) {
@@ -157,13 +171,13 @@ public final class NpcAnimations {
             }
             if (nativeGunLoop != null) nativeGunLoop.tick();
         }
-        @Override public boolean isActive() { return age < duration + 4 || domain.equals("GUN") && summaryAge < 45
+        @Override public boolean isActive() { return age < duration + 4 && !idleGun() || domain.equals("GUN") && !idleGun() && summaryAge < 45
             || throwAge < throwDuration + 4
             || domain.equals("SLASHBLADE") && (phantomAge < phantomDuration + 4 || guardAge < guardDuration + 4); }
         @Override public void setupAnim(float partialTick) { delta = partialTick; }
         @Override public Vec3f get3DTransform(String part, TransformType type, float partialTick, Vec3f original) {
             if (type == TransformType.ROTATION && throwAge + partialTick < throwDuration + 4 && (part.equals("leftArm") || part.equals("body"))) {
-                float time = Mth.clamp((throwAge + partialTick) / Math.max(1, throwDuration), 0, 1);
+                float time = throwHolding ? 1 : Mth.clamp((throwAge + partialTick) / Math.max(1, throwDuration), 0, 1);
                 float blend = Mth.clamp((throwDuration + 4 - throwAge - partialTick) / 4, 0, 1);
                 Vec3f target = part.equals("leftArm") ? new Vec3f(throwRelease ? -1.65F + time * 1.25F : -1.25F - time * 1.15F, 0.25F, -0.18F)
                     : new Vec3f(throwRelease ? -0.06F * (1 - time) : 0.06F * time, -0.08F * (1 - time), 0);
@@ -188,7 +202,7 @@ public final class NpcAnimations {
                 if (type != TransformType.ROTATION) return target;
                 original = target; weight = 0;
             } else if (type != TransformType.ROTATION) return original;
-            if (domain.equals("GUN")) {
+            if (domain.equals("GUN") && !idleGun()) {
                 weight = summaryAge < 35 ? 1 : Mth.clamp((45 - summaryAge) / 10f, 0, 1);
                 if (part.equals("rightArm")) target = new Vec3f((aiming ? -1.55F : -0.85F) + pitch - (pose.equals("FIRE") ? pulse * fade * 0.15F : 0), -0.12F, 0);
                 if (part.equals("leftArm")) target = new Vec3f((aiming ? -1.45F : -0.55F) + pitch, 0.55F, -0.12F);

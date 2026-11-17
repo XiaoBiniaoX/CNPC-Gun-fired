@@ -10,6 +10,8 @@ public interface GunAdapter extends WeaponAdapter {
     Views.GunCaps capabilities(ItemStack stack);
     Views.AmmoState ammo(CombatContext context);
     Result fire(CombatContext context);
+    /** Select a supported native invocation before querying its interval and mechanics. */
+    default Result prepareFire(CombatContext context) { return Result.success(); }
     /** Cancel an unreleased firing action without cancelling a native reload. */
     default void stopFire(CombatContext context) {}
     Result reload(CombatContext context);
@@ -22,11 +24,19 @@ public interface GunAdapter extends WeaponAdapter {
         int taken = Math.max(0, Math.min(requested, ammoUnits(weapon, item))); item.shrink(taken); return taken;
     }
     default int loadedRounds(ItemStack stack) { return -1; }
+    /** Physical rounds required by one native trigger; resource-free guns have no magazine. */
+    default int ammoPerShot(ItemStack stack) { return 1; }
     default int magazineCapacity(ItemStack stack) { return -1; }
     default void resetReserve(CombatContext context, ItemStack weapon) {}
     default int baseInterval(ItemStack stack) { return 4; }
+    default int nativeInterval(CombatContext context) { return baseInterval(context.weapon); }
     default Double spread(ItemStack stack) { return null; }
     default Double recoil(ItemStack stack) { return null; }
+    default double configuredRecoil(CombatContext ctx) {
+        Double nativeRecoil = recoil(ctx.weapon);
+        return ctx.config.bool("gun.applyRecoil") && nativeRecoil != null && Double.isFinite(nativeRecoil)
+            ? Math.abs(nativeRecoil) * ctx.config.number("gun.recoilMultiplier") : 0;
+    }
     default Object aimState(CombatContext context) { return null; }
     default Result aim(CombatContext context, boolean aiming) { return Result.fail("UNSUPPORTED"); }
 }

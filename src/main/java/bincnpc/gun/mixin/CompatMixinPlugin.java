@@ -19,7 +19,9 @@ public final class CompatMixinPlugin implements IMixinConfigPlugin {
         }
         if (!mixin.contains(".compat.")) return true;
         try {
-            MixinService.getService().getBytecodeProvider().getClassNode(target, true);
+            ClassNode node = MixinService.getService().getBytecodeProvider().getClassNode(target, true);
+            if (mixin.endsWith("TaczBurstMixin")) return node.methods.stream().anyMatch(method -> method.name.equals("modifyProperty")
+                && method.desc.equals("(Ljava/lang/String;Ljava/lang/Class;Ljava/lang/Object;)Ljava/lang/Object;"));
             return true;
         } catch (ClassNotFoundException | java.io.IOException e) { return false; }
     }

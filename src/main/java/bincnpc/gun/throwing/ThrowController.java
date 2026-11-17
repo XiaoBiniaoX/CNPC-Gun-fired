@@ -6,6 +6,7 @@ import bincnpc.gun.common.api.Result;
 import bincnpc.gun.common.combat.*;
 import bincnpc.gun.common.network.GunNetwork;
 import bincnpc.gun.gun.adapter.GunAdapter;
+import bincnpc.gun.gun.controller.ReloadPolicy;
 import java.util.*;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.*;
@@ -15,7 +16,7 @@ import net.minecraft.world.phys.Vec3;
 
 /** One staged native projectile and one numeric worker job per NPC. No world mutation leaves the main thread. */
 public final class ThrowController {
-    private static final int PLAN_TIMEOUT = 28, FRESH_TICKS = 10;
+    private static final int PLAN_TIMEOUT = ThrowPolicy.PLAN_TIMEOUT;
     private Pending pending;
     private long nextThrow, nextEvaluation, recoveryUntil, lastBackstep = Long.MIN_VALUE, nextWarning;
     private long nextDiagnostic;
@@ -28,15 +29,18 @@ public final class ThrowController {
         final ThrowAdapter.Profile profile;
         final Projectile projectile;
         final Ballistics.Vec offset;
+        final boolean safeDistance;
         UUID target;
         Ballistics.Vec aim, movement;
         double targetRadius;
-        long releaseAt = -1, planStarted;
-        boolean finalPlan, failed;
+        long releaseAt = -1, planStarted, capturedAt = -1;
+        boolean finalPlan, failed, reserved, holdingPose;
         String failure = "";
         Ballistics.Request request;
         Ballistics.Candidate candidate;
         Ballistics.World world;
+        List<Ballistics.Candidate> candidates = List.of();
+        int nextCandidate;
         ThrowPlanner.Ticket<List<Ballistics.Candidate>> solving;
         ThrowPlanner.Ticket<Ballistics.Candidate> assessing;
         CollisionSnapshot capture;
@@ -45,16 +49,19 @@ public final class ThrowController {
             revision = ctx.config.revision; inventoryEpoch = ctx.data.throwItems.epoch;
             dimension = ctx.npc.level().dimension().location().toString(); target = ctx.target.getUUID();
             key = ctx.data.throwItems.get(slot).getItem().toString();
+            safeDistance = ThrowPolicy.requiresSafeDistance(ctx.config.text("throw.slot" + slot + ".timing"));
         }
         String prefix() { return "throw.slot" + slot + "."; }
         boolean winding() { return releaseAt >= 0; }
         void clearPlan() {
             if (solving != null) solving.cancel(); if (assessing != null) assessing.cancel();
             solving = null; assessing = null; capture = null; candidate = null; world = null; failed = false; failure = "";
+            candidates = List.of(); nextCandidate = 0; capturedAt = -1;
         }
     }
-    public boolean blocksAttack(long now) { return pending != null && pending.winding() || now < recoveryUntil; }
-    public boolean movementLocked() { return pending != null && pending.winding(); }
+    public boolean blocksAttack(long now) { return pending != null && (pending.reserved || pending.winding()) || now < recoveryUntil; }
+    public boolean movementLocked() { return pending != null && (pending.reserved || pending.winding()); }
+    public boolean pausesCharge() { return pending != null && pending.reserved && !pending.winding(); }
     public boolean planning() { return pending != null; }
     public void cancel() {
         if (pending != null) {
@@ -95,29 +102,34 @@ public final class ThrowController {
                 recoveryUntil = 0; if (ctx.runtime.combatState.equals("THROWING")) CombatService.setState(ctx, ctx.validTarget() ? "WAITING" : "IDLE");
             }
             if (ctx.now < nextEvaluation || ctx.now < nextThrow || ctx.now < recoveryUntil || !ctx.validTarget() || !ThrowFlights.hasRoom()) return;
-            nextEvaluation = ctx.now + 8; select(ctx); return;
+            nextEvaluation = ctx.now + 4; select(ctx); return;
         }
         Pending p = pending;
         if (p.revision != ctx.config.revision || p.inventoryEpoch != ctx.data.throwItems.epoch || ctx.data.throwItems.remaining(ctx, p.slot) == 0
                 || !p.dimension.equals(ctx.npc.level().dimension().location().toString()) || !p.key.equals(ctx.data.throwItems.get(p.slot).getItem().toString())) { abort(ctx, "equipment, configuration or quota changed"); return; }
         if (!target(ctx, p)) { abort(ctx, "target lost"); return; }
+        if (p.reserved && !p.winding()) hold(ctx);
         if (p.winding()) {
             hold(ctx);
-            if (ctx.now > p.releaseAt) { abort(ctx, "release deadline missed"); return; }
+            if (ctx.now > p.releaseAt + PLAN_TIMEOUT) { abort(ctx, "release planning wait expired"); return; }
             if (!p.finalPlan && ctx.now >= p.releaseAt - Math.min(10, ctx.config.integer(p.prefix() + "windup"))) {
                 p.finalPlan = true; startPlan(ctx, p, (int)Math.max(0, p.releaseAt - ctx.now));
             }
         }
         advancePlan(ctx, p);
-        if (p.failed || ctx.now - p.planStarted > PLAN_TIMEOUT && p.candidate == null) { abort(ctx, p.failed ? p.failure : "planning timeout"); return; }
+        if (p.failed || ThrowPolicy.planExpired(ctx.now, p.planStarted) && p.candidate == null) { abort(ctx, p.failed ? p.failure : "planning timeout"); return; }
         if (p.candidate == null) {
-            if (p.winding() && ctx.now >= p.releaseAt) abort(ctx, "planning result unavailable at release deadline");
+            if (p.winding() && ctx.now >= p.releaseAt && !p.holdingPose) {
+                p.holdingPose = true;
+                GunNetwork.animation(ctx, "THROW_HOLD", Math.max(1, PLAN_TIMEOUT - (int)(ctx.now - p.planStarted) + 1));
+            }
             return;
         }
         if (!p.winding()) {
-            if (ctx.now - p.planStarted > PLAN_TIMEOUT) { abort(ctx, "combat action remained locked until prediction expired"); return; }
+            if (ThrowPolicy.planExpired(ctx.now, p.planStarted)) { abort(ctx, "combat action remained locked until prediction expired"); return; }
             if (!fresh(ctx, p, false)) { abort(ctx, "initial prediction became stale"); return; }
             if (!beginWindup(ctx)) return;
+            p.reserved = true;
             int windup = ctx.config.integer(p.prefix() + "windup");
             p.releaseAt = ctx.now + windup;
             GunNetwork.animation(ctx, "THROW", Math.max(1, windup));
@@ -147,6 +159,17 @@ public final class ThrowController {
         if (ctx.runtime.adapter instanceof GunAdapter gun) AdapterRegistry.run(gun, () -> gun.stopFire(ctx));
         return true;
     }
+    private static boolean firingTask(CombatContext ctx) {
+        if (!(ctx.runtime.adapter instanceof GunAdapter gun) || ctx.runtime.gunCaps == null || !ctx.runtime.gunCaps.canFire
+                || ctx.runtime.reloading || ctx.runtime.fireStopped || !ctx.config.bool("gun.enabled")) return false;
+        var ammo = ctx.data.gun.ammo(ctx);
+        int cost = AdapterRegistry.query(gun, () -> gun.ammoPerShot(ctx.weapon), 1);
+        if (ammo == null ? ctx.runtime.ammoEmpty
+                : ammo.isReloading || !ReloadPolicy.hasLoadedShot(ammo.hasMagazine, ammo.magazineAmmo, cost, ctx.config.bool("ammo.infinite"))) return false;
+        boolean firingAction = ctx.runtime.scheduler.busy(ctx.now) && ctx.runtime.scheduler.channel.equals("GUN");
+        return ThrowPolicy.shootingTask(ctx.now, ctx.runtime.firstTargetTick, ctx.runtime.lastFired,
+            ctx.config.bool("gun.autoAttack"), firingAction);
+    }
     private void select(CombatContext ctx) {
         String unavailable = "no equipped compatible throwable with remaining quota";
         Integer[] order = {0, 1, 2}; Arrays.sort(order, Comparator.comparingInt((Integer slot) -> ctx.config.integer("throw.slot" + slot + ".priority")).reversed());
@@ -157,7 +180,7 @@ public final class ThrowController {
                     || ctx.distance > ctx.config.number(prefix + "calculationRange")) { unavailable = "target outside throwing or calculation range"; continue; }
             String timing = ctx.config.text(prefix + "timing");
             if (timing.equals("RELOAD") && !ctx.runtime.reloading
-                    || timing.equals("SHOOT") && (!(ctx.runtime.adapter instanceof GunAdapter) || ctx.runtime.reloading || ctx.now - ctx.runtime.lastFired > 4)
+                    || timing.equals("SHOOT") && !firingTask(ctx)
                     || timing.equals("RANDOM") && ctx.npc.getRandom().nextInt(12) != 0) { unavailable = "configured timing " + timing + " not active"; continue; }
             ItemStack item = ctx.data.throwItems.get(slot); ThrowAdapter adapter = ThrowAdapters.find(item); if (adapter == null) continue;
             Projectile projectile = null;
@@ -181,10 +204,21 @@ public final class ThrowController {
                 }
                 Pending p = new Pending(ctx, slot, adapter, profile, projectile, offset);
                 updateTarget(p, ctx.target);
-                if (!CollisionSnapshot.safeArea((ServerLevel)ctx.npc.level(), ctx.npc, p.aim, profile.blastRadius())) {
+                if (p.safeDistance && !CollisionSnapshot.safeArea((ServerLevel)ctx.npc.level(), ctx.npc, p.aim, profile.blastRadius())) {
                     diagnostic(ctx, slot, "unsafe landing area"); retryAt[slot] = ctx.now + 40; projectile.discard(); continue;
                 }
-                pending = p; startPlan(ctx, p, ctx.config.integer(prefix + "windup")); return;
+                if (timing.equals("SHOOT")) {
+                    // Freeze the launch point and pause charging; only a valid trajectory can interrupt the gun.
+                    Scheduler scheduler = ctx.runtime.scheduler;
+                    if (ctx.runtime.shotInterval > 0 || scheduler.busy(ctx.now)
+                            && (!scheduler.channel.equals("GUN") || !scheduler.interruptible)) {
+                        unavailable = "firing action cannot be interrupted"; projectile.discard(); retryAt[slot] = ctx.now + 2; continue;
+                    }
+                    p.reserved = true;
+                }
+                pending = p;
+                if (p.reserved) hold(ctx);
+                startPlan(ctx, p, ctx.config.integer(prefix + "windup")); return;
             } catch (RuntimeException | LinkageError error) {
                 if (projectile != null && !projectile.isRemoved()) projectile.discard();
                 retryAt[slot] = ctx.now + 40;
@@ -232,20 +266,34 @@ public final class ThrowController {
         if (p.solving != null && p.solving.finished()) {
             List<Ballistics.Candidate> result = p.solving.result(); p.solving = null;
             if (result == null || result.isEmpty()) { p.failed = true; p.failure = result == null ? "numeric planner cancelled" : "no ballistic solution for speed, range and angle"; return; }
-            try { p.capture = new CollisionSnapshot((ServerLevel)ctx.npc.level(), ctx.npc, p.request, result); }
-            catch (IllegalArgumentException limit) { p.failed = true; p.failure = "terrain capture limit"; return; }
+            p.candidates = result.stream().sorted(Comparator.comparingDouble(candidate ->
+                candidate.ticks() + (candidate.mode() == Ballistics.Trajectory.CURVE ? 0.25 : 0))).toList();
+        }
+        if (p.capture == null && p.assessing == null && p.candidate == null && !p.candidates.isEmpty()) {
+            while (p.capture == null && p.nextCandidate < p.candidates.size()) {
+                Ballistics.Candidate candidate = p.candidates.get(p.nextCandidate++);
+                try { p.capture = new CollisionSnapshot((ServerLevel)ctx.npc.level(), ctx.npc, p.request, List.of(candidate), p.safeDistance); }
+                catch (IllegalArgumentException limit) { p.failure = "trajectory exceeded terrain capture budget"; }
+            }
+            if (p.capture == null) { p.failed = true; p.failure = "all trajectories blocked, unsafe or beyond terrain capture budget"; return; }
         }
         if (p.capture != null && p.capture.capture()) {
             p.world = p.capture.result(); p.capture = null;
-            if (p.world == null) { p.failed = true; p.failure = "terrain or blast safety capture failed"; return; }
+            if (p.world == null) {
+                p.failed = p.nextCandidate >= p.candidates.size(); p.failure = "terrain or blast safety capture failed"; return;
+            }
+            p.capturedAt = ctx.now;
             p.assessing = ThrowPlanner.assess(p.world); if (p.assessing == null) { p.failed = true; p.failure = "collision planner queue unavailable"; return; }
         }
         if (p.assessing != null && p.assessing.finished()) {
-            p.candidate = p.assessing.result(); p.assessing = null; p.failed = p.candidate == null; p.failure = p.failed ? "all trajectories blocked or unsafe" : "";
+            p.candidate = p.assessing.result(); p.assessing = null;
+            if (p.candidate == null) {
+                p.world = null; p.failed = p.nextCandidate >= p.candidates.size(); p.failure = "all trajectories blocked or unsafe";
+            }
         }
     }
     private boolean fresh(CombatContext ctx, Pending p, boolean release) {
-        if (ctx.now < p.planStarted || ctx.now - p.planStarted > (release ? FRESH_TICKS : PLAN_TIMEOUT)) return false;
+        if (!ThrowPolicy.predictionFresh(ctx.now, p.planStarted, p.capturedAt, release)) return false;
         var current = request(ctx, p, 0);
         if (current.origin().distance(p.request.origin()) > (release ? 0.9 : 2)) return false;
         var expected = p.request.target().add(p.request.prediction() ? p.request.movement().scale(ctx.now - p.planStarted) : new Ballistics.Vec(0, 0, 0));
@@ -256,7 +304,7 @@ public final class ThrowController {
             Ballistics.Request current = request(ctx, p, 0); Ballistics.Candidate candidate = Ballistics.retarget(current, p.candidate);
             if (candidate == null || p.world == null || !ThrowFlights.hasRoom()) { abort(ctx, "release correction failed or flight table full"); return; }
             candidate = Ballistics.choose(new Ballistics.World(current, List.of(candidate), p.world.walls(), p.world.danger()));
-            if (candidate == null || !CollisionSnapshot.safeArea((ServerLevel)ctx.npc.level(), ctx.npc, candidate.goal(), p.profile.blastRadius())) { abort(ctx, "corrected trajectory blocked or unsafe"); return; }
+            if (candidate == null || p.safeDistance && !CollisionSnapshot.safeArea((ServerLevel)ctx.npc.level(), ctx.npc, candidate.goal(), p.profile.blastRadius())) { abort(ctx, "corrected trajectory blocked or unsafe"); return; }
             if (p.target != null) {
                 Entity entity = ((ServerLevel)ctx.npc.level()).getEntity(p.target);
                 if (!(entity instanceof LivingEntity living) || !CombatService.validTarget(ctx.npc, living)
@@ -297,6 +345,7 @@ public final class ThrowController {
     public void afterAi(CombatContext ctx) {
         if (!CombatService.serverThread(ctx.npc) || !movementLocked() || !CombatService.validNpc(ctx.npc) || lastBackstep == ctx.now) return;
         lastBackstep = ctx.now; hold(ctx);
+        if (pending == null || !pending.winding()) return;
         Vec3 away = ctx.npc.position().subtract(CollisionSnapshot.vector(pending.aim));
         double horizontal = away.horizontalDistance(); if (horizontal < 1E-6) away = Vec3.directionFromRotation(0, ctx.npc.getYRot()).scale(-1); else away = new Vec3(away.x / horizontal, 0, away.z / horizontal);
         var destination = ctx.npc.getBoundingBox().move(away.scale(0.02));

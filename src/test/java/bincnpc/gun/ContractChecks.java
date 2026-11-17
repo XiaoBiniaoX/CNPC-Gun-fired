@@ -3,12 +3,18 @@ package bincnpc.gun;
 import bincnpc.gun.common.api.*;
 import bincnpc.gun.common.combat.CombatDecisions;
 import bincnpc.gun.common.combat.Scheduler;
+import bincnpc.gun.common.combat.Prefire;
 import bincnpc.gun.common.config.*;
 import bincnpc.gun.slashblade.action.*;
 import bincnpc.gun.slashblade.combo.*;
 import bincnpc.gun.slashblade.strategy.Presets;
 import bincnpc.gun.throwing.Ballistics;
+import bincnpc.gun.throwing.ThrowPolicy;
 import bincnpc.gun.gun.controller.ReloadTiming;
+import bincnpc.gun.gun.controller.ReloadPolicy;
+import bincnpc.gun.gun.ammo.AmmoPolicy;
+import bincnpc.gun.gun.controller.RecoilState;
+import bincnpc.gun.gun.controller.FireTiming;
 import bincnpc.gun.compat.superb.BocekDrawState;
 import com.google.gson.*;
 import java.util.*;
@@ -17,7 +23,7 @@ import java.util.*;
 public final class ContractChecks {
     private static int checks;
     public static void main(String[] args) throws Exception {
-        json(); schema(); graphs(); scheduling(); combatDecisions(); ballistics(); reloadTiming(); bowDraw(); presets(); api();
+        json(); schema(); graphs(); scheduling(); combatDecisions(); ballistics(); throwingPolicy(); reloadTiming(); ammunitionPolicy(); recoil(); firing(); bowDraw(); presets(); api();
         EditorChecks.run();
         System.out.println("CNPCGUN_CONTRACT_CHECKS=" + checks + " PASSED");
     }
@@ -50,7 +56,15 @@ public final class ContractChecks {
     }
     private static void schema() {
         Set<String> ids = new HashSet<>();
-        for (Parameter p : ConfigSchema.all()) { check(ids.add(p.id), "duplicate configuration key"); p.validate(SafeJson.copy(p.defaultValue)); }
+        for (Parameter p : ConfigSchema.all()) {
+            check(ids.add(p.id), "duplicate configuration key"); p.validate(SafeJson.copy(p.defaultValue));
+            if (ConfigSchema.isGunSetting(p.id)) check(p.capability.isEmpty(), "gun settings remain editable for every native weapon: " + p.id);
+        }
+        Views.GunCaps zero = new Views.GunCaps().withNpcControls();
+        check(zero.canControlRecoil && zero.canControlSpread && zero.canControlSpreadLimit && zero.canBlindFire,
+            "zero native recoil and spread do not remove NPC controls");
+        check(!zero.hasRecoil && !zero.hasSpread && !zero.hasMagazine && !zero.canReload,
+            "NPC control settings do not invent native weapon resources or magazine mechanics");
         rejected(() -> Parameter.integer("count", 1, 0, 10).validate(new JsonPrimitive(1.5)), "fractional count");
         rejected(() -> Parameter.bool("enabled", true).validate(new JsonPrimitive("true")), "boolean must be boolean");
         rejected(() -> ConfigSchema.get("slashblade.preset").validate(null), "missing preset value rejected");
@@ -92,6 +106,72 @@ public final class ContractChecks {
             + "{\"id\":\"start\",\"action\":\"slashblade:tests/basic\",\"parameters\":{},\"conditions\":[{\"id\":\"distance\",\"min\":0,\"max\":4}],\"onSuccess\":\"near\",\"onFailure\":\"far\"},"
             + "{\"id\":\"near\",\"action\":\"slashblade:tests/basic\",\"onSuccess\":\"end\"},"
             + "{\"id\":\"far\",\"action\":\"slashblade:tests/basic\",\"onSuccess\":\"end\"}]}" );
+    }
+    private static void recoil() {
+        RecoilState state = new RecoilState();
+        state.kick(10, 4); check(state.pitch() == -4, "successful shot kicks upward");
+        state.advance(11, true); check(state.pitch() == -3, "recoil recovers with elapsed server ticks");
+        state.advance(11, true); check(state.pitch() == -3, "same tick cannot recover recoil twice");
+        state.kick(11, 2); check(state.pitch() == -5, "multiple shots accumulate once each");
+        state.kick(11, Double.NaN); state.kick(11, Double.POSITIVE_INFINITY);
+        check(state.pitch() == -5, "invalid native recoil cannot corrupt NPC aiming");
+        state.kick(11, 100000); check(state.pitch() == -30, "recoil remains bounded");
+        state.advance(12, false); check(state.pitch() == 0, "disabling recoil immediately clears its effect");
+        state.kick(12, 3); state.advance(9, true); check(state.pitch() == 0, "recoil clears when server time rolls back");
+        state.kick(9, 3); state.advance(1000, true); check(state.pitch() == 0, "long unload gaps do not retain recoil");
+        state.kick(1000, 3); state.reset(); check(state.pitch() == 0, "weapon and target changes release recoil state");
+    }
+    private static void firing() {
+        for (String mode : List.of("TRACK", "SWEEP")) {
+            check(!Prefire.active(mode, false, false), "prefire cannot acquire an unseen target");
+            check(!Prefire.active(mode, false, true), "prefire needs a locked target");
+            check(!Prefire.active(mode, true, true), "visible targets retain ordinary aim and spread");
+            check(Prefire.active(mode, true, false), "prefire applies to a locked target behind cover");
+        }
+        check(!Prefire.active("NONE", true, false) && !Prefire.active("ANY_TARGET", true, false), "disabled and unknown prefire modes cannot fire through cover");
+
+        NpcConfig config = new NpcConfig(new JsonObject());
+        config.set("gun.fireInterval", new JsonPrimitive(1));
+        FireTiming.Settings nativeSettings = FireTiming.Settings.read(config);
+        check(FireTiming.plan(nativeSettings, 6, true, true, 0, 1).ticks() == 6, "native mode retains the weapon interval without an override");
+        config.set("gun.overrideNativeRate", new JsonPrimitive(true));
+        check(FireTiming.plan(FireTiming.Settings.read(config), 6, true, true, 0, 1).ticks() == 1, "native mode can explicitly override a slow native gun");
+        config.set("gun.firingMode", new JsonPrimitive("AUTO"));
+        check(FireTiming.plan(FireTiming.Settings.read(config), 6, true, true, 0, 1).ticks() == 1, "automatic override uses the configured interval");
+        config.set("gun.overrideNativeRate", new JsonPrimitive(false));
+        check(FireTiming.plan(FireTiming.Settings.read(config), 6, true, true, 0, 1).ticks() == 6, "custom triggers wait for the native interval rather than repeatedly rejecting shots");
+        config.set("gun.fireInterval", new JsonPrimitive(12));
+        check(FireTiming.plan(FireTiming.Settings.read(config), 6, true, true, 0, 1).ticks() == 12, "custom rate can slow a native weapon without overriding it");
+        config.set("gun.overrideNativeRate", new JsonPrimitive(true));
+        config.set("gun.fireRateMultiplier", new JsonPrimitive(2));
+        check(FireTiming.plan(FireTiming.Settings.read(config), 12, true, true, 0, 1).ticks() == 6, "automatic cadence applies the rate multiplier");
+        config.set("gun.randomInterval", new JsonPrimitive(true));
+        check(FireTiming.plan(FireTiming.Settings.read(config), 12, true, true, 0, 8).ticks() == 4, "randomized intervals also apply the rate multiplier");
+
+        config.set("gun.firingMode", new JsonPrimitive("BURST"));
+        FireTiming.Settings burst = FireTiming.Settings.read(config);
+        int remaining = 0, elapsed = 0;
+        int[] expectedTimes = {1, 2, 8, 9, 10, 16};
+        for (int expected : expectedTimes) {
+            FireTiming.Plan plan = FireTiming.plan(burst, 12, true, true, remaining, 8);
+            elapsed += plan.ticks(); remaining = plan.burstRemaining();
+            check(elapsed == expected, "burst count, within-burst rate and inter-burst rate use one cadence");
+        }
+        check(remaining == 0, "two complete bursts finish with no queued native burst");
+        config.set("gun.recovery", new JsonPrimitive(10));
+        check(FireTiming.plan(FireTiming.Settings.read(config), 12, true, true, 0, 8).ticks() == 10, "explicit recovery is a minimum action duration");
+        check(FireTiming.plan(burst, 12, true, false, 0, 8).ticks() == 12, "a native adapter without override support keeps its native floor");
+        check(FireTiming.plan(burst, 12, false, false, 0, 8).burstRemaining() == 0, "non-gun native actions do not invent a burst mechanic");
+        check(FireTiming.scaledTicks(1200, 0.05) == 24000 && FireTiming.scaledTicks(1, 20) == 1, "configured cadence stays within bounded server ticks");
+        check(FireTiming.scaledTicks(4, Double.NaN) == 4, "invalid external rate data cannot poison the firing clock");
+        check(FireTiming.reschedule(15, 10, 6) == 16, "changing rate shortens an old outstanding wait from the last shot");
+        check(FireTiming.reschedule(15, 10, 20) == 30, "slower rate edits do not append a second full wait");
+        check(FireTiming.reschedule(15, 10, 1) == 15, "an elapsed new interval is immediately ready");
+        check(FireTiming.reschedule(15, -1000, 6) == 15 && FireTiming.reschedule(15, 20, 6) == 15, "unset and rolled-back shot times recover safely");
+        check(FireTiming.remainingMillis(16, 15) == 50 && FireTiming.remainingMillis(16, 16) == 0, "native clock has no additional boundary tick");
+        FireTiming.Settings beforeAmmoEdit = FireTiming.Settings.read(config);
+        config.set("ammo.defaultReserve", new JsonPrimitive(50));
+        check(beforeAmmoEdit.equals(FireTiming.Settings.read(config)), "unrelated ammunition edits retain the firing plan");
     }
     private static void graphs() {
         Map<String, ActionRegistry.Definition> actions = Map.of("slashblade:tests/basic", definition("slashblade:tests/basic", "NORMAL_ATTACK"));
@@ -235,6 +315,52 @@ public final class ContractChecks {
         var repaired = new NpcConfig(SafeJson.parseObject("{\"values\":{\"throw.slot0.minRange\":40,\"throw.slot0.maxRange\":8}}"));
         check(repaired.number("throw.slot0.minRange") <= repaired.number("throw.slot0.maxRange"), "stored throwing ranges recover safely");
     }
+    private static void throwingPolicy() {
+        check(ThrowPolicy.requiresSafeDistance("SAFE"), "safe-distance timing retains blast clearance checks");
+        for (String timing : List.of("SHOOT", "RELOAD", "RANDOM"))
+            check(!ThrowPolicy.requiresSafeDistance(timing), "other throw timings do not impose hidden blast clearance: " + timing);
+        check(ThrowPolicy.shootingTask(160, 100, 105, true, false), "slow automatic guns remain a shooting task beyond the recent-shot window");
+        check(ThrowPolicy.shootingTask(160, 100, -1000, true, false), "automatic aiming and charging can trigger a throw before a bullet is released");
+        check(ThrowPolicy.shootingTask(160, 100, -1000, false, true), "a native firing action can trigger a throw without reporting a released bullet");
+        check(ThrowPolicy.shootingTask(160, 100, 155, false, false), "a recent manual shot retains its throw opportunity");
+        check(!ThrowPolicy.shootingTask(160, 100, 105, false, false), "an old manual shot does not create a persistent shooting task");
+        check(!ThrowPolicy.shootingTask(160, 150, 145, false, false), "a shot at the previous target does not activate the new target's manual throw timing");
+        check(!ThrowPolicy.shootingTask(160, 100, 170, false, false), "a future shot timestamp does not activate manual throw timing");
+        check(!ThrowPolicy.shootingTask(90, 100, 105, true, true), "a rolled-back target clock cannot activate a shooting task");
+        check(ThrowPolicy.predictionFresh(123, 100, 122, true), "a 22-tick budgeted terrain capture remains usable at release");
+        check(ThrowPolicy.predictionFresh(128, 100, 128, true), "planning may complete at the last allowed tick");
+        check(!ThrowPolicy.predictionFresh(129, 100, 129, true), "a late completed plan cannot extend the planning timeout");
+        check(!ThrowPolicy.predictionFresh(124, 100, 113, true), "an old collision capture must be refreshed before release");
+        check(!ThrowPolicy.predictionFresh(110, 100, -1, true) && !ThrowPolicy.predictionFresh(110, 100, 111, true),
+            "missing and future collision captures cannot authorize a release");
+        check(ThrowPolicy.predictionFresh(124, 100, 113, false) && !ThrowPolicy.predictionFresh(99, 100, 100, false),
+            "initial action acquisition has the planning budget and rejects a reversed clock");
+    }
+    private static void ammunitionPolicy() {
+        check(!ReloadPolicy.hasLoadedShot(true, 1, 2, false) && ReloadPolicy.hasLoadedShot(true, 2, 2, false),
+            "multi-round triggers reload when the remaining rounds cannot pay for one shot");
+        check(ReloadPolicy.hasLoadedShot(true, 0, 2, true) && ReloadPolicy.hasLoadedShot(false, null, 2, false),
+            "infinite and native inventory-ammo guns are not treated as empty magazines");
+        check(ReloadPolicy.requested("EMPTY", true, false, 1, 0), "empty-shot detection includes a partial multi-round charge");
+        check(ReloadPolicy.requested("THRESHOLD", true, true, 3, 3), "configured tactical reload starts at its threshold during combat");
+        check(!ReloadPolicy.requested("THRESHOLD", true, true, 4, 3) && !ReloadPolicy.requested("EMPTY", true, true, 3, 3),
+            "other reload timing does not inherit the threshold rule");
+        check(ReloadPolicy.requested("IDLE", false, true, 3, 0) && !ReloadPolicy.requested("IDLE", true, true, 3, 0),
+            "idle reload is limited to the configured idle condition");
+        check(ReloadPolicy.bufferNeed(30, 12, 300) == 18 && ReloadPolicy.bufferNeed(30, 30, 300) == 0,
+            "native buffered ammunition is credited once across reload retries");
+        check(ReloadPolicy.bufferNeed(30, 29, 29) == 0 && ReloadPolicy.bufferNeed(Integer.MAX_VALUE, 1, 100000) == 99999,
+            "buffer replenishment cannot overfill capacity or overflow arithmetic");
+        check(AmmoPolicy.allowsReserve("INDEPENDENT") && !AmmoPolicy.allowsItems("INDEPENDENT", false),
+            "reserve-only selection never consumes NPC inventory items");
+        check(!AmmoPolicy.allowsReserve("NPC_ITEMS") && AmmoPolicy.allowsItems("NPC_ITEMS", false),
+            "inventory-only selection never consumes the independent reserve");
+        check(AmmoPolicy.allowsReserve("MIXED") && AmmoPolicy.allowsItems("MIXED", false), "mixed selection exposes both sources");
+        check(!AmmoPolicy.allowsItems("MIXED", true) && !AmmoPolicy.allowsItems("NPC_ITEMS", true),
+            "infinite ammunition does not consume real inventory items");
+        check(AmmoPolicy.reserveFirst("RESERVE_FIRST") && !AmmoPolicy.reserveFirst("ITEMS_FIRST"),
+            "both source-priority choices retain their configured order");
+    }
     private static void reloadTiming() {
         check(ReloadTiming.steps(7, 2) == 4 && ReloadTiming.stepAt(100, 31, 4, 4) == 131, "the last partial ammo step ends at the requested reload duration");
         check(ReloadTiming.stepAt(100, 1, 1, 4) == 101 && ReloadTiming.stepAt(100, 1, 4, 4) == 101, "short reloads may combine native ammo steps within one server tick");
@@ -268,6 +394,17 @@ public final class ContractChecks {
             "a fully charged BOCEK release is claimed once, including reentrant fire requests");
         draw.cancel();
         check(!draw.releasing() && !draw.release(releaseAt), "cancel invalidates even an already claimed release");
+
+        BocekDrawState paused = new BocekDrawState(100, target, 3, 5);
+        boolean preserved = true;
+        for (int tick = 101; tick <= 106; tick++) preserved &= paused.advance(tick, target, 3, 5, true);
+        for (int tick = 107; tick <= 136; tick++) preserved &= paused.pause(tick, target, 3, 5, true) && !paused.release(tick);
+        for (int tick = 137; tick <= 143; tick++) preserved &= paused.advance(tick, target, 3, 5, true) && !paused.release(tick);
+        check(preserved, "throw planning pauses a partial bow draw without charging or cancelling it");
+        check(paused.advance(144, target, 3, 5, true) && paused.release(144), "failed planning resumes the saved bow draw at its remaining duration");
+        BocekDrawState invalidPause = new BocekDrawState(0, target, 3, 5);
+        check(!invalidPause.pause(1, other, 3, 5, true) && !invalidPause.advance(1, target, 3, 5, true),
+            "paused charging still rejects changed targets and cannot revive cancelled state");
 
         BocekDrawState changedTarget = new BocekDrawState(0, target, 3, 5);
         check(!changedTarget.advance(1, other, 3, 5, true) && !changedTarget.advance(1, target, 3, 5, true),

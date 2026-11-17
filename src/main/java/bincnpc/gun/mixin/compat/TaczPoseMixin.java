@@ -11,8 +11,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(targets = "com.tacz.guns.compat.playeranimator.PlayerAnimatorCompat", remap = false)
 public abstract class TaczPoseMixin {
-    @Inject(method = "hasPlayerAnimator3rd", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "hasPlayerAnimator3rd(Lnet/minecraft/world/entity/LivingEntity;Lcom/tacz/guns/client/resource/GunDisplayInstance;)Z", at = @At("HEAD"), cancellable = true)
     private static void cnpcgun$nativeNpcClip(LivingEntity entity, GunDisplayInstance display, CallbackInfoReturnable<Boolean> cir) {
-        if (entity instanceof EntityNPCInterface npc && NpcAnimations.nativeGun(npc)) cir.setReturnValue(true);
+        if (entity instanceof EntityNPCInterface npc && (NpcAnimations.nativeGun(npc) || NpcAnimations.idleGun(npc))) cir.setReturnValue(true);
     }
 }

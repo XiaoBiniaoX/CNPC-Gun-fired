@@ -7,9 +7,11 @@
   "plugin": "bincnpc.gun.mixin.CompatMixinPlugin",
   "mixins": [
     "ScriptGlobalsMixin", "ExternalStoreInvoker", "ExternalPortableMixin",
-    "NpcDataMixin", "LinkedNpcMixin", "ClonePortableMixin", "RangedAiMixin", "MeleeAiMixin", "ProjectileHitAccess", "ProjectileFactoryAccess",
-    "compat.BladeDurabilityMixin", "compat.BladeTargetsMixin", "compat.ArtificeReloadMixin", "compat.TaczReloadMixin", "compat.SuperbAmmoMixin", "compat.PathfindingTacticsMixin", "compat.CgmThrowAccess", "compat.SuperbThrowGravityMixin", "compat.SuperbThrowChunkMixin"
+    "NpcDataMixin", "NpcFriendlyFireMixin", "LivingEffectFriendlyFireMixin", "ProjectileFriendlyFireMixin", "LinkedNpcMixin", "ClonePortableMixin", "RangedAiMixin", "MeleeAiMixin", "ProjectileHitAccess", "ProjectileFactoryAccess",
+    "compat.BladeDurabilityMixin", "compat.BladeTargetsMixin", "compat.ArtificeReloadMixin", "compat.TaczReloadMixin", "compat.TaczFireRateMixin", "compat.TaczGunRateMixin", "compat.TaczBurstMixin", "compat.TaczSpreadMixin", "compat.SuperbAmmoMixin", "compat.SuperbFireRateMixin", "compat.PathfindingTacticsMixin", "compat.CgmThrowAccess", "compat.SuperbThrowGravityMixin", "compat.SuperbThrowChunkMixin",
+    "compat.TaczFriendlyFireMixin", "compat.CgmFriendlyFireMixin", "compat.ArtificeFriendlyFireMixin", "compat.SuperbFriendlyFireMixin", "compat.SuperbThrowableFriendlyFireMixin", "compat.SuperbDamageFriendlyFireMixin",
+    "compat.LrStunFriendlyFireMixin", "compat.LrSplashFriendlyFireMixin", "compat.LrCloudFriendlyFireMixin"
   ],
-  "client": ["GuiNpcMenuMixin", "NpcAnimationMixin", "compat.BladeLayerPoseMixin", "compat.TaczAnimationAccess", "compat.TaczPoseMixin"],
+  "client": ["GuiNpcMenuMixin", "NpcAnimationMixin", "GunIdlePoseMixin", "compat.BladeLayerPoseMixin", "compat.TaczAnimationAccess", "compat.TaczPoseMixin"],
   "injectors": {"defaultRequire": 1}
 }

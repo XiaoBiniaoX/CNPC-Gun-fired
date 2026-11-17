@@ -3,6 +3,7 @@ package bincnpc.gun.common.network;
 import bincnpc.gun.common.adapter.*;
 import bincnpc.gun.common.api.*;
 import bincnpc.gun.common.combat.CombatContext;
+import bincnpc.gun.common.config.ConfigSchema;
 import bincnpc.gun.gun.adapter.GunAdapter;
 import bincnpc.gun.gun.switching.Armory;
 import bincnpc.gun.slashblade.adapter.BladeAdapter;
@@ -42,14 +43,7 @@ public final class EditorWeapons {
         return false;
     }
     public static boolean firingMode(CombatContext ctx, String mode) {
-        for (int i = 0; i < Armory.SIZE; i++) {
-            ItemStack stack = ctx.data.armory.get(ctx.npc, i); WeaponAdapter adapter = AdapterRegistry.find(stack);
-            if (adapter instanceof GunAdapter gun) {
-                Views.GunCaps caps = AdapterRegistry.query(gun, () -> gun.capabilities(stack), null);
-                if (caps != null && caps.firingModes != null && Arrays.asList(caps.firingModes).contains(mode)) return true;
-            }
-        }
-        return false;
+        return mode != null && Arrays.asList(ConfigSchema.get("gun.firingMode").values).contains(mode);
     }
     public static JsonArray snapshot(CombatContext ctx) {
         JsonArray slots = new JsonArray();

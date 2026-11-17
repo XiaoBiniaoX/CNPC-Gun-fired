@@ -43,7 +43,7 @@ public final class ArtificeAdapter implements GunAdapter {
         c.supportsSingleShot = true; c.supportsAutomaticFire = true; c.supportsBurst = true;
         c.firingModes = new String[]{"NATIVE", "SINGLE", "SEMI", "AUTO", "BURST", "CUSTOM"};
         c.projectileModel = "INTERNAL";
-        return c;
+        return c.withNpcControls();
     }
     private int containers(CombatContext ctx) {
         if (!AmmoController.allowsItems(ctx)) return 0;
@@ -64,6 +64,8 @@ public final class ArtificeAdapter implements GunAdapter {
     }
     @Override public Result fire(CombatContext ctx) {
         if (ctx.config.bool("ammo.infinite")) GunItem.setMagazine(ctx.weapon, GunItem.getMagazine(ctx.weapon).with(gun(ctx.weapon).magazineCapacity()));
+        if (ctx.config.bool("gun.overrideNativeRate") && ctx.runtime.shotInterval > 0 && ctx.now >= ctx.runtime.nextShot
+                && ctx.weapon == ctx.npc.getMainHandItem() && FireDelayState.isActive(ctx.npc, ctx.weapon)) FireDelayState.clear(ctx.npc);
         FireOutcome outcome = GunplayManager.tryFire(ctx.npc, ctx.shotDirection());
         return switch (outcome) {
             case FIRED -> Result.success();
@@ -117,20 +119,29 @@ public final class ArtificeAdapter implements GunAdapter {
     }
     private void composeProfile(ComposeShotEvent event, CombatContext ctx) {
         var profile = event.getShotProfile();
-        profile.modifyValue(ShotComponents.SPREAD, modifier(ctx.spreadMultiplier()));
+        double spread = profile.value(ShotComponents.SPREAD);
+        if (spread > 0) profile.modifyValue(ShotComponents.SPREAD,
+            modifier(Math.min(ctx.config.number("gun.maxSpread"), spread * ctx.spreadMultiplier()) / spread));
         double recoil = ctx.config.bool("gun.applyRecoil") ? ctx.config.number("gun.recoilMultiplier") : 0;
         profile.modifyValue(ShotComponents.CAMERA_RECOIL_MULTIPLIER, modifier(recoil));
         profile.modifyValue(ShotComponents.CHARACTER_BLOWBACK, modifier(recoil));
         if (ctx.config.bool("gun.overrideNativeRate")) {
-            double ticks = Math.max(1, ctx.config.integer("gun.fireInterval") / ctx.config.number("gun.fireRateMultiplier"));
-            double base = Math.max(1, profile.value(ShotComponents.FIRE_DELAY));
-            profile.modifyValue(ShotComponents.FIRE_DELAY, modifier(ticks / base));
+            double ticks = bincnpc.gun.gun.controller.GunController.configuredNativeInterval(ctx);
+            double base = profile.value(ShotComponents.FIRE_DELAY);
+            double rate = Math.max(1.0E-6, profile.value(ShotComponents.FIRE_RATE));
+            double delay = ticks * rate;
+            if (base > 0) profile.modifyValue(ShotComponents.FIRE_DELAY, modifier(delay / base));
+            else profile.modifyValue(ShotComponents.FIRE_DELAY, new ValueModifier(delay - base, ValueModifier.Operation.ADD, ValueModifier.Type.NEUTRAL));
         }
     }
     private static ValueModifier modifier(double multiplier) {
         return new ValueModifier(multiplier - 1, ValueModifier.Operation.MULTIPLY_TOTAL, ValueModifier.Type.NEUTRAL);
     }
-    @Override public int baseInterval(ItemStack stack) { return Math.max(1, (int)gun(stack).getGun().baseProfile().getOrDefault(ShotComponents.FIRE_DELAY).base()); }
+    @Override public int baseInterval(ItemStack stack) {
+        var profile = gun(stack).getGun().baseProfile();
+        return Math.max(1, (int)Math.round(profile.getOrDefault(ShotComponents.FIRE_DELAY).base()
+            / Math.max(1.0E-6, profile.getOrDefault(ShotComponents.FIRE_RATE).base())));
+    }
     @Override public Double spread(ItemStack stack) { return gun(stack).getGun().baseProfile().getOrDefault(ShotComponents.SPREAD).base(); }
     @Override public Double recoil(ItemStack stack) { return (double)gun(stack).getGun().baseProfile().getOrDefault(ShotComponents.CAMERA_RECOIL).magnitude(); }
     @Override public void cancel(CombatContext ctx) {

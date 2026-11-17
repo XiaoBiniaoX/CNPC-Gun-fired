@@ -63,13 +63,14 @@ public final class SuperbAdapter implements GunAdapter {
         c.firingModes = new String[]{"NATIVE", "SINGLE", "SEMI", "AUTO", "BURST", "CUSTOM"};
         c.projectileModel = "INTERNAL";
         c.supportsSpecialMechanics = true; c.specialMechanics = new String[]{"CHARGE", "HEAT", "BOLT", "NATIVE_PROJECTILE", "ENERGY"};
-        return c;
+        return c.withNpcControls();
     }
     @Override public Views.AmmoState ammo(CombatContext ctx) {
         GunData gun = gun(ctx.weapon); boolean needsAmmo = gun.get(GunProp.AMMO_COST_PER_SHOOT) > 0;
         boolean finite = needsAmmo && finite(gun);
         int nativeReserve = nativeReserve(ctx, gun);
-        int own = needsAmmo && SuperbAmmo.inventory(gun) ? Math.max(0, ctx.data.ammo.independent(ctx, this, ctx.weapon) - ctx.config.integer("ammo.minimumReserve")) : 0;
+        int own = needsAmmo && SuperbAmmo.inventory(gun) && AmmoController.allowsIndependent(ctx)
+            ? Math.max(0, ctx.data.ammo.independent(ctx, this, ctx.weapon) - ctx.config.integer("ammo.minimumReserve")) : 0;
         int capacity = needsAmmo ? gun.get(GunProp.MAGAZINE) : 0;
         return new Views.AmmoState(capacity > 0, capacity > 0 ? gun.ammo.get() : null, capacity > 0 ? capacity : null,
             finite, finite && nativeReserve < Integer.MAX_VALUE ? (int)Math.min(100000L, (long)nativeReserve + own) : null,
@@ -84,7 +85,8 @@ public final class SuperbAdapter implements GunAdapter {
         int loaded = Math.max(0, data.ammo.get()), capacity = data.get(GunProp.MAGAZINE);
         if (capacity > 0 && loaded >= cost) return true;
         long reserve = nativeReserve(ctx, data);
-        if (SuperbAmmo.inventory(data)) reserve += Math.max(0, ctx.data.ammo.independent(ctx, this, stack) - ctx.config.integer("ammo.minimumReserve"));
+        if (SuperbAmmo.inventory(data) && AmmoController.allowsIndependent(ctx))
+            reserve += Math.max(0, ctx.data.ammo.independent(ctx, this, stack) - ctx.config.integer("ammo.minimumReserve"));
         if (data.useBackpackAmmo()) return reserve >= cost;
         int missing = Math.max(0, capacity - loaded);
         return loaded + Math.min(reserve, missing) >= cost && (ctx.config.bool("ammo.partialReload") || reserve >= missing);
@@ -93,11 +95,15 @@ public final class SuperbAdapter implements GunAdapter {
         GunData gun = gun(ctx.weapon);
         if (!SuperbAmmo.inventory(gun)) return;
         // Native backup counts already include the consumer's loadAmount and virtual remainder.
-        int available = gun.countBackupAmmo(new AmmoInventory(ctx.npc, AmmoController.allowsItems(ctx)));
+        int available = AmmoController.reserveFirst(ctx) ? Math.max(0, gun.virtualAmmo.get())
+            : gun.countBackupAmmo(new AmmoInventory(ctx.npc, AmmoController.allowsItems(ctx)));
         int count = ctx.data.ammo.takeReserve(ctx, ammoKey(ctx.weapon), (int)Math.max(0L, (long)amount - available));
         if (count > 0) { gun.virtualAmmo.add(count); gun.cachedBackupAmmo = -1; gun.save(); }
     }
     @Override public Result fire(CombatContext ctx) {
+        return SuperbFireRate.fire(ctx, () -> fireNative(ctx));
+    }
+    private Result fireNative(CombatContext ctx) {
         GunData gun = gun(ctx.weapon);
         if (gun.reloading()) { SuperbBow.cancel(ctx); return Result.fail("BUSY"); }
         if (ctx.config.bool("ammo.infinite") && gun.get(GunProp.MAGAZINE) > 0) {
@@ -105,19 +111,31 @@ public final class SuperbAdapter implements GunAdapter {
         }
         if (gun.useBackpackAmmo()) feedReserve(ctx, Math.max(1, gun.get(GunProp.AMMO_COST_PER_SHOOT)));
         if (!gun.hasEnoughAmmoToShoot(ctx.npc)) { SuperbBow.cancel(ctx); return Result.fail("NO_AMMO"); }
+        if (ctx.config.bool("gun.overrideNativeRate")) applyParameters(ctx);
         if (!gun.canShoot(ctx.npc)) {
             SuperbBow.cancel(ctx);
             return Result.fail(gun.charging() ? "BUSY" : "COOLDOWN");
         }
-        String requested = ctx.config.text("gun.firingMode");
-        if (!requested.equals("NATIVE")) {
-            String nativeMode = requested.equals("AUTO") ? "AUTO" : requested.equals("BURST") ? "BURST" : "SEMI";
-            List<FireModeInfo> modes = gun.get(GunProp.AVAILABLE_FIRE_MODES);
-            for (int i = 0; i < modes.size(); i++) if (modes.get(i).mode.name().equals(nativeMode)) gun.selectedFireMode.set(i);
-        }
         if (SuperbBow.matches(gun)) return SuperbBow.fire(ctx, gun);
         gun.shoot(ctx.npc, Math.min(ctx.config.number("gun.maxSpread"), gun.get(GunProp.SPREAD) * ctx.spreadMultiplier()),
             gun.zooming.get(), ctx.target.getUUID());
+        return Result.success();
+    }
+    @Override public Result prepareFire(CombatContext ctx) {
+        GunData gun = gun(ctx.weapon);
+        String requested = ctx.config.text("gun.firingMode");
+        if (!requested.equals("NATIVE")) {
+            String nativeMode = requested.equals("AUTO") ? "AUTO" : "SEMI";
+            List<FireModeInfo> modes = gun.get(GunProp.AVAILABLE_FIRE_MODES);
+            int selected = -1, fallback = -1;
+            for (int i = 0; i < modes.size(); i++) {
+                String mode = modes.get(i).mode.name();
+                if (mode.equals(nativeMode)) selected = i;
+                if (fallback < 0 && (mode.equals("SEMI") || mode.equals("AUTO"))) fallback = i;
+            }
+            int selector = selected >= 0 ? selected : fallback;
+            if (selector >= 0 && gun.selectedFireMode.get() != selector) gun.selectedFireMode.set(selector);
+        }
         return Result.success();
     }
     @Override public Result reload(CombatContext ctx) {
@@ -135,9 +153,14 @@ public final class SuperbAdapter implements GunAdapter {
         return gun.reloading() || gun.reload.reloadStarter.shouldStart() || gun.reload.singleReloadStarter.shouldStart()
             ? Result.success() : Result.fail("BUSY");
     }
+    @Override public int ammoPerShot(ItemStack stack) { return Math.max(1, gun(stack).get(GunProp.AMMO_COST_PER_SHOOT)); }
     @Override public int baseInterval(ItemStack stack) { return Math.max(1, (int)Math.ceil(1200.0 / Math.max(1, gun(stack).get(GunProp.RPM)))); }
     @Override public Double spread(ItemStack stack) { return gun(stack).get(GunProp.SPREAD); }
     @Override public Double recoil(ItemStack stack) { return gun(stack).get(GunProp.RECOIL); }
+    @Override public double configuredRecoil(CombatContext ctx) {
+        // NPC temporary data already contains this setting's multiplier.
+        return ctx.config.bool("gun.applyRecoil") ? Math.abs(gun(ctx.weapon).get(GunProp.RECOIL)) : 0;
+    }
     @Override public Result aim(CombatContext ctx, boolean aim) { gun(ctx.weapon).zooming.set(aim); return Result.success(); }
     @Override public Object aimState(CombatContext ctx) { return gun(ctx.weapon).zooming.get(); }
     @Override public void onEquip(CombatContext ctx) {
@@ -148,7 +171,7 @@ public final class SuperbAdapter implements GunAdapter {
         GunData gun = gun(ctx.weapon);
         double recoil = ctx.config.bool("gun.applyRecoil") ? ctx.config.number("gun.recoilMultiplier") : 0;
         boolean override = ctx.config.bool("gun.overrideNativeRate");
-        int rpm = Math.max(1, (int)Math.round(1200.0 * ctx.config.number("gun.fireRateMultiplier") / ctx.config.integer("gun.fireInterval")));
+        int rpm = Math.max(1, (int)Math.ceil(1200.0 / bincnpc.gun.gun.controller.GunController.configuredNativeInterval(ctx)));
         int range = (int)ctx.config.number("gun.range");
         int reloadTicks = ctx.runtime.reloadTargetTicks;
         Object roundState = ctx.runtime.adapterState.get("superb.reloadRounds");

@@ -52,15 +52,23 @@ public final class CombatContext {
     public float pitch() {
         if (target == null) return npc.getXRot();
         double dx = target.getX() - npc.getX(), dz = target.getZ() - npc.getZ();
-        return net.minecraft.util.Mth.clamp((float)-Math.toDegrees(Math.atan2(target.getEyeY() - npc.getEyeY(), Math.sqrt(dx * dx + dz * dz))) + runtime.shotPitchOffset, -90, 90);
+        return net.minecraft.util.Mth.clamp((float)(-Math.toDegrees(Math.atan2(target.getEyeY() - npc.getEyeY(), Math.sqrt(dx * dx + dz * dz)))
+            + runtime.recoil.pitch()) + runtime.shotPitchOffset, -90, 90);
     }
+    public boolean isPrefiring() {
+        String mode = config.text("gun.prefire");
+        if ((!mode.equals("TRACK") && !mode.equals("SWEEP")) || !validTarget() || target != npc.getTarget()
+                || npc.getEyePosition().distanceToSqr(target.getEyePosition()) > 128 * 128) return false;
+        return Prefire.active(mode, true, npc.getSensing().hasLineOfSight(target));
+    }
+    public boolean canFireWithoutSight() { return config.bool("gun.blindFire") || isPrefiring(); }
     public net.minecraft.world.phys.Vec3 shotDirection() { return net.minecraft.world.phys.Vec3.directionFromRotation(pitch(), yaw()); }
     public double spreadMultiplier() {
-        if (config.text("gun.prefire").equals("SWEEP")) return 2;
         double spread = config.number("gun.spreadMultiplier") * (100 - config.number("gun.accuracy")) / 50;
         if (npc.getDeltaMovement().horizontalDistanceSqr() > 0.005) spread *= config.number("gun.moveSpread");
         if (!npc.onGround()) spread *= config.number("gun.jumpSpread");
         if (runtime.aiming) spread *= config.number("gun.aimSpread");
+        if (isPrefiring() && config.text("gun.prefire").equals("SWEEP")) spread *= 2;
         return spread * Math.pow(config.number("gun.continuousSpread"), Math.min(runtime.shotStreak, 10));
     }
 }

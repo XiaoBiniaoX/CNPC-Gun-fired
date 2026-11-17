@@ -327,13 +327,26 @@ public final class GunNetwork {
     }
     public static void animation(CombatContext ctx, String pose, int duration, String actionId) {
         if (!CombatService.serverThread(ctx.npc)) return;
+        int ticks = Math.max(1, Math.min(2400, duration));
+        if (ctx.runtime.domain.equals("GUN") && (pose.equals("FIRE") || pose.equals("MELEE")))
+            ctx.runtime.gunAnimationUntil = Math.max(ctx.runtime.gunAnimationUntil, ctx.now + ticks);
         CHANNEL.send(PacketDistributor.TRACKING_ENTITY.with(() -> ctx.npc), new Animation(ctx.npc.getId(), ctx.npc.getUUID(),
-            ctx.runtime.domain, pose, actionId, Math.max(1, Math.min(2400, duration)), ctx.runtime.aiming));
+            ctx.runtime.domain, pose, actionId, ticks, ctx.runtime.aiming));
+    }
+    public static String statePose(CombatContext ctx) {
+        if (!ctx.runtime.domain.equals("GUN") || !ctx.config.bool("gun.disableIdleAnimation")) return "STATE";
+        boolean action = ctx.runtime.reloading || ctx.now < ctx.runtime.gunAnimationUntil
+            || ctx.runtime.scheduler.busy(ctx.now) && Set.of("GUN", "RELOAD", "THROW").contains(ctx.runtime.scheduler.channel);
+        boolean active = !ctx.runtime.editorPaused && ctx.config.bool("combat.enabled") && ctx.config.bool("gun.enabled")
+            && (ctx.validTarget() || action);
+        return active ? "STATE" : "STATE_IDLE";
     }
     public static void summary(CombatContext ctx) {
-        String key = ctx.runtime.domain + ":" + ctx.runtime.aiming + ":" + ctx.runtime.combatState;
+        if (!CombatService.serverThread(ctx.npc)) return;
+        String pose = statePose(ctx);
+        String key = ctx.runtime.domain + ":" + ctx.runtime.aiming + ":" + ctx.runtime.combatState + ":" + pose;
         if (ctx.now < ctx.runtime.nextAnimationSummary && key.equals(ctx.runtime.animationSummary)) return;
         ctx.runtime.animationSummary = key; ctx.runtime.nextAnimationSummary = ctx.now + 20;
-        animation(ctx, "STATE", 25);
+        animation(ctx, pose, 25);
     }
 }

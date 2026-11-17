@@ -1,5 +1,7 @@
 package bincnpc.gun.common.combat;
 
+import bincnpc.gun.gun.controller.ReloadPolicy;
+
 import bincnpc.gun.common.adapter.*;
 import bincnpc.gun.common.api.*;
 import bincnpc.gun.common.config.*;
@@ -53,7 +55,6 @@ public final class CombatService {
         if (state.runtime.editorUntil > npc.level().getGameTime()) return;
         if (state.runtime.editorPaused) endEditing(new CombatContext(npc));
         else if (state.runtime.restoreSupplies) restoreDefaults(new CombatContext(npc));
-        acquirePrefireTarget(npc);
         if (!state.config.bool("combat.allowTargetChange") && state.runtime.targetId != null
                 && (npc.getTarget() == null || !state.runtime.targetId.equals(npc.getTarget().getUUID()))) {
             Entity previous = ((ServerLevel)npc.level()).getEntity(state.runtime.targetId);
@@ -63,6 +64,8 @@ public final class CombatService {
         if (ctx.runtime.lastTick == ctx.now) return;
         ctx.runtime.lastTick = ctx.now;
         refresh(ctx);
+        ctx.runtime.recoil.advance(ctx.now, ctx.runtime.adapter instanceof GunAdapter && ctx.config.bool("combat.enabled")
+            && ctx.config.bool("gun.enabled") && ctx.config.bool("gun.applyRecoil") && !ctx.runtime.editorPaused);
         ctx.runtime.scheduler.expire(ctx.now);
         AmmoSupply.pickup(ctx);
         CombatMovement.prepare(ctx);
@@ -81,6 +84,8 @@ public final class CombatService {
         UUID target = ctx.validTarget() ? ctx.target.getUUID() : null;
         if (!Objects.equals(target, ctx.runtime.targetId)) {
             ctx.runtime.targetId = target; ctx.runtime.firstTargetTick = ctx.now;
+            ctx.runtime.burstRemaining = 0; ctx.runtime.shotStreak = 0; ctx.runtime.lastFired = -1000; ctx.runtime.recoil.reset();
+            ctx.runtime.pendingShotTiming = null; ctx.runtime.nextFireAttempt = 0; ctx.runtime.lastShotInterval = 0;
             if (target != null) ctx.runtime.fireStopped = false;
             ctx.runtime.nextShot = ctx.now + ctx.config.integer("gun.firstDelay") + ctx.config.integer("gun.windup");
             EventBridge.emit(ctx, "combat.target_changed", "", Result.success());
@@ -134,7 +139,6 @@ public final class CombatService {
         if (decisionDue) ctx.runtime.nextDecision = ctx.now + decisionInterval(ctx);
         CombatMovement.tick(ctx);
         CombatMovement.face(ctx.npc);
-        bincnpc.gun.common.network.GunNetwork.summary(ctx);
         EventBridge.flush(ctx);
     }
 
@@ -156,8 +160,13 @@ public final class CombatService {
         if (old != null) AdapterRegistry.cancel(old, ctx.withWeapon(ctx.runtime.lastStack));
         ctx.data.blade.reset();
         ctx.runtime.adapterState.clear();
+        ctx.runtime.recoil.reset(); ctx.runtime.burstRemaining = 0; ctx.runtime.shotInterval = 0;
+        ctx.runtime.pendingShotTiming = null; ctx.runtime.nextFireAttempt = 0; ctx.runtime.lastShotInterval = 0;
+        ctx.runtime.firingSettings = null; ctx.runtime.firingRevision = -1; ctx.runtime.lastFired = -1000;
+        ctx.runtime.nextShot = ctx.now + ctx.config.integer("gun.firstDelay") + ctx.config.integer("gun.windup");
         if (!ctx.runtime.scheduler.channel.equals("SWITCH") || !ctx.runtime.scheduler.busy(ctx.now)) ctx.runtime.scheduler.clear();
         ctx.runtime.actionId = ""; ctx.runtime.comboId = ""; ctx.runtime.comboNode = ""; ctx.runtime.lastBladeAction = "";
+        ctx.runtime.gunAnimationUntil = 0;
         ctx.runtime.adapter = current; ctx.runtime.weaponId = id; ctx.runtime.lastStack = ctx.weapon;
         updateCapabilities(ctx, current);
         ctx.runtime.nextCapabilityCheck = ctx.now + ctx.config.integer("combat.decisionInterval");
@@ -255,7 +264,8 @@ public final class CombatService {
         // Native reload may already own the available rounds; do not cancel it as "empty".
         if (stack == ctx.weapon && ammo != null && ammo.isReloading) return true;
         if (!AdapterRegistry.query(gun, () -> gun.canUse(view, stack), false)) return false;
-        if (ctx.config.bool("ammo.infinite") || ammo == null || !ammo.hasMagazine || ammo.magazineAmmo == null || ammo.magazineAmmo > 0) return true;
+        int cost = AdapterRegistry.query(gun, () -> gun.ammoPerShot(stack), 1);
+        if (ammo == null || ReloadPolicy.hasLoadedShot(ammo.hasMagazine, ammo.magazineAmmo, cost, ctx.config.bool("ammo.infinite"))) return true;
         return ammo.canReload && (ctx.config.bool("ammo.partialReload") || ammo.reserveAmmo == null || ammo.magazineCapacity == null
             || ammo.reserveAmmo >= ammo.magazineCapacity - ammo.magazineAmmo);
     }
@@ -285,7 +295,9 @@ public final class CombatService {
             invalidateDecision(ctx); movement.nextMove = ctx.now;
             if (ctx.runtime.adapter instanceof GunAdapter) {
                 Views.AmmoState ammo = ctx.data.gun.ammo(ctx);
-                if (!ctx.runtime.ammoEmpty && ammo != null && ammo.hasMagazine && ammo.magazineAmmo != null && ammo.magazineAmmo <= 0) {
+                GunAdapter gun = (GunAdapter)ctx.runtime.adapter;
+                int cost = AdapterRegistry.query(gun, () -> gun.ammoPerShot(ctx.weapon), 1);
+                if (!ctx.runtime.ammoEmpty && ammo != null && !ReloadPolicy.hasLoadedShot(ammo.hasMagazine, ammo.magazineAmmo, cost, ctx.config.bool("ammo.infinite"))) {
                     ctx.runtime.ammoEmpty = true; EventBridge.emit(ctx, "gun.ammo_empty", "", Result.success());
                 }
                 if (!ctx.runtime.noAmmoEvent) { ctx.runtime.noAmmoEvent = true; EventBridge.emit(ctx, "gun.no_ammo", "", Result.fail("NO_AMMO")); }
@@ -341,8 +353,11 @@ public final class CombatService {
             if (!usableGun(ctx, gun, stack)) return false;
             Views.GunCaps caps = AdapterRegistry.query(gun, () -> gun.capabilities(stack), null);
             if (caps == null || !caps.canFire) return false;
-            if (requireLoaded && caps.hasMagazine && caps.canReadAmmo && !ctx.config.bool("ammo.infinite")
-                    && AdapterRegistry.query(gun, () -> gun.loadedRounds(stack), 0) <= 0) return false;
+            if (requireLoaded && caps.hasMagazine && caps.canReadAmmo && !ctx.config.bool("ammo.infinite")) {
+                int rounds = AdapterRegistry.query(gun, () -> gun.loadedRounds(stack), 0);
+                int cost = AdapterRegistry.query(gun, () -> gun.ammoPerShot(stack), 1);
+                if (!ReloadPolicy.hasLoadedShot(true, rounds, cost, false)) return false;
+            }
         }
         return !requireLoaded || !melee || ctx.distance <= Math.max(4, ctx.config.number("weapon.meleeDistance"));
     }
@@ -363,6 +378,8 @@ public final class CombatService {
                 if (caps == null || !caps.canFire) continue;
                 if (caps.hasMagazine && caps.canReadAmmo) loaded = Math.max(-1, Math.min(100000, AdapterRegistry.query(gun, () -> gun.loadedRounds(stack), -1)));
                 capacity = Math.max(-1, Math.min(100000, AdapterRegistry.query(gun, () -> gun.magazineCapacity(stack), -1)));
+                int cost = AdapterRegistry.query(gun, () -> gun.ammoPerShot(stack), 1);
+                if (loaded >= 0 && !ReloadPolicy.hasLoadedShot(true, loaded, cost, ctx.config.bool("ammo.infinite"))) loaded = 0;
             }
             String key = weaponKey(stack, adapter); if (key.length() > 256) continue;
             choices.add(new CombatDecisions.Weapon(i, key, melee, adapter instanceof GunAdapter, loaded, capacity, ctx.config.integer("weapon.slot" + i + ".priority")));
@@ -441,18 +458,6 @@ public final class CombatService {
         if (target instanceof EntityNPCInterface other) return npc.getFaction().isAggressiveToNpc(other);
         if (target instanceof net.minecraft.world.entity.player.Player player) return npc.getFaction().isAggressiveToPlayer(player);
         return npc.getFaction().getsAttacked && target instanceof net.minecraft.world.entity.monster.Enemy;
-    }
-    private static void acquirePrefireTarget(EntityNPCInterface npc) {
-        NpcData data = data(npc); long now = npc.level().getGameTime();
-        if (!data.config.bool("combat.enabled") || !data.config.bool("gun.enabled") || !data.config.bool("gun.autoAttack")
-            || data.config.text("gun.prefire").equals("NONE") || !data.runtime.command.equals("AUTO")
-            || now < data.runtime.nextDecision || validTarget(npc, npc.getTarget())) return;
-        double range = Math.min(data.config.number("combat.attackRange"), data.config.number("gun.range"));
-        LivingEntity nearest = null; double distance = range * range;
-        for (LivingEntity target : npc.level().getEntitiesOfClass(LivingEntity.class, npc.getBoundingBox().inflate(range), entity -> hostile(npc, entity))) {
-            double candidate = npc.distanceToSqr(target); if (candidate < distance) { nearest = target; distance = candidate; }
-        }
-        if (nearest != null) npc.setTarget(nearest);
     }
     public static void rewardKill(EntityNPCInterface owner, LivingEntity victim) {
         if (!serverThread(owner) || !validNpc(owner) || victim == null || owner == victim || victim.level() != owner.level()) return;

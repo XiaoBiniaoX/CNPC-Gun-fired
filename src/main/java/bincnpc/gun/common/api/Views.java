@@ -22,6 +22,11 @@ public final class Views {
         public String[] firingModes = {"NATIVE"};
         public String[] specialMechanics = {};
         public GunCaps copy() { return SafeJson.GSON.fromJson(SafeJson.GSON.toJson(this), GunCaps.class); }
+        public GunCaps withNpcControls() {
+            canControlRecoil = true; canControlSpread = true; canControlSpreadLimit = true;
+            canControlRange = true; canBlindFire = true;
+            return this;
+        }
         public boolean has(String key) {
             if (key == null) return false;
             return switch (key) {

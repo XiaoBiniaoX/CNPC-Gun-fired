@@ -276,23 +276,12 @@ public final class GuiWeapons extends Screen implements EditorDialogs.Host {
         fields(tr("automaticSwitch"), p -> p.id.startsWith("weapon.") && !p.id.startsWith("weapon.slot") && !p.id.equals("weapon.primarySlot"));
     }
     private void shooting() {
-        if (!gun()) { empty(tr("noGun"), tr("noGunHint"), true); return; }
         newForm(body(), "shooting");
         Set<String> basic = Set.of("gun.enabled", "gun.autoAttack", "gun.minRange", "gun.range", "gun.requireAim", "gun.moveFire", "gun.jumpFire", "gun.blindFire", "gun.lostSight", "gun.prefire", "gun.accuracy");
-        fields(tr("engagement"), p -> basic.contains(p.id) && !Set.of("gun.requireAim", "gun.blindFire", "gun.lostSight", "gun.prefire").contains(p.id));
+        fields(tr("engagement"), p -> basic.contains(p.id) && !Set.of("gun.lostSight", "gun.prefire").contains(p.id));
         segments("gun.prefire"); segments("gun.lostSight");
         form.heading(tr("firePattern"));
-        for (Parameter p : ConfigSchema.all()) if (p.id.startsWith("gun.") && !p.id.startsWith("gun.reload") && !basic.contains(p.id) && !accuracy(p)) {
-            if (p.id.equals("gun.firingMode")) {
-                Set<String> modes = new LinkedHashSet<>(); modes.add("NATIVE");
-                for (JsonElement raw : session.array("editableWeapons")) {
-                    if (!raw.isJsonObject()) continue;
-                    JsonObject weapon = raw.getAsJsonObject(); if (!weapon.has("gun") || !weapon.get("gun").isJsonObject()) continue;
-                    for (JsonElement mode : SafeJson.arrayField(weapon.getAsJsonObject("gun"), "firingModes"))
-                        if (mode.isJsonPrimitive() && mode.getAsJsonPrimitive().isString()) modes.add(mode.getAsString());
-                }
-                p = Parameter.choice(p.id, "NATIVE", modes.toArray(String[]::new)).requires("gun.fire");
-            }
+        for (Parameter p : ConfigSchema.all()) if (p.id.startsWith("gun.") && !p.id.startsWith("gun.reload") && !p.id.equals("gun.disableIdleAnimation") && !basic.contains(p.id) && !accuracy(p)) {
             field(p);
         }
         fields(tr("accuracy"), GuiWeapons::accuracy);
@@ -327,15 +316,16 @@ public final class GuiWeapons extends Screen implements EditorDialogs.Host {
     }
     private void ammunition() {
         form.heading(tr("reloadSpeed")); booleanSegments("gun.reloadSpeedEnabled");
-        if (value("gun.reloadSpeedEnabled").getAsBoolean()) {
-            field(ConfigSchema.get("gun.reloadMinTicks")); field(ConfigSchema.get("gun.reloadMaxTicks"));
-        }
-        form.heading(tr("reloadPolicy")); segments("ammo.reloadTiming"); toggleNumber("ammo.partialReload", "ammo.reloadThreshold");
+        field(ConfigSchema.get("gun.reloadMinTicks")); field(ConfigSchema.get("gun.reloadMaxTicks"));
+        form.heading(tr("reloadPolicy")); field(ConfigSchema.get("ammo.autoReload")); field(ConfigSchema.get("ammo.combatReload"));
+        segments("ammo.reloadTiming"); field(ConfigSchema.get("ammo.partialReload")); field(ConfigSchema.get("ammo.reloadThreshold"));
         field(ConfigSchema.get("ammo.noAmmoBehavior")); form.heading(tr("ammo")); field(ConfigSchema.get("ammo.infinite"));
-        if (value("ammo.infinite").getAsBoolean()) return;
+        field(ConfigSchema.get("gun.disableIdleAnimation"));
         field(ConfigSchema.get("ammo.defaultReserve")); form.heading(tr("finiteSources"));
+        segments("ammo.source"); segments("ammo.priority");
         toggleNumber("ammo.killSupply", "ammo.killReward"); field(ConfigSchema.get("ammo.dropSupply"));
         form.heading(tr("reservePolicy"));
+        field(ConfigSchema.get("ammo.reserveLimit")); field(ConfigSchema.get("ammo.minimumReserve"));
         for (JsonElement raw : session.array("slotAmmo")) {
             if (!raw.isJsonObject()) continue;
             JsonObject ammo = raw.getAsJsonObject(); int reserve = SafeJson.integer(ammo, "reserve", -1), slot = SafeJson.integer(ammo, "slot", -1);

@@ -31,7 +31,7 @@ public final class AmmoController {
         if (!CombatService.serverThread(ctx.npc)) return 0;
         String key = key(ctx, adapter, weapon);
         if (key == null || reserve.size() >= 64 && !reserve.containsKey(key)) return 0;
-        int credited = Math.max(0, Math.min(amount, 100000 - independent(key)));
+        int credited = Math.max(0, Math.min(amount, ctx.config.integer("ammo.reserveLimit") - independent(key)));
         if (credited > 0) { reserve.put(key, independent(key) + credited); resumeAfterSupply(ctx); }
         return credited;
     }
@@ -40,12 +40,12 @@ public final class AmmoController {
         if (!CombatService.serverThread(ctx.npc) || units <= 0 || units > 100000 || matching.isEmpty() || matching.size() > 6) return false;
         List<String> keys = new ArrayList<>(new LinkedHashSet<>(matching));
         Map<String, Integer> credits = new LinkedHashMap<>();
-        int left = units, freeKeys = Math.max(0, 64 - reserve.size());
+        int left = units, freeKeys = Math.max(0, 64 - reserve.size()), limit = ctx.config.integer("ammo.reserveLimit");
         for (int i = 0; i < keys.size(); i++) {
             String key = keys.get(i);
             if (key == null || key.length() > 256 || !key.startsWith("slot:")) return false;
             boolean fresh = !reserve.containsKey(key);
-            int capacity = fresh && freeKeys == 0 ? 0 : 100000 - independent(key);
+            int capacity = fresh && freeKeys == 0 ? 0 : Math.max(0, limit - independent(key));
             int portion = Math.min(capacity, (left + keys.size() - i - 1) / (keys.size() - i));
             if (portion > 0) { credits.put(key, portion); left -= portion; if (fresh) freeKeys--; }
         }
@@ -54,7 +54,7 @@ public final class AmmoController {
             int planned = credits.getOrDefault(key, 0);
             boolean fresh = !reserve.containsKey(key) && planned == 0;
             if (fresh && freeKeys == 0) continue;
-            int portion = Math.min(left, 100000 - independent(key) - planned);
+            int portion = Math.min(left, Math.max(0, limit - independent(key) - planned));
             if (portion > 0) { credits.put(key, planned + portion); left -= portion; if (fresh) freeKeys--; }
         }
         if (left != 0) return false;
@@ -75,8 +75,9 @@ public final class AmmoController {
         return available(ctx, adapter, ctx.weapon);
     }
     public int available(CombatContext ctx, GunAdapter adapter, ItemStack weapon) {
+        if (!CombatService.serverThread(ctx.npc)) return 0;
         if (ctx.config.bool("ammo.infinite")) return 100000;
-        int count = Math.max(0, independent(ctx, adapter, weapon) - ctx.config.integer("ammo.minimumReserve"));
+        int count = allowsIndependent(ctx) ? Math.max(0, independent(ctx, adapter, weapon) - ctx.config.integer("ammo.minimumReserve")) : 0;
         if (allowsItems(ctx)) {
             AmmoInventory inventory = new AmmoInventory(ctx.npc);
             for (int i = 0; i < inventory.getSlots(); i++) {
@@ -86,14 +87,16 @@ public final class AmmoController {
         }
         return count;
     }
-    public static boolean allowsIndependent(CombatContext ctx) { return true; }
-    public static boolean allowsItems(CombatContext ctx) { return !ctx.config.bool("ammo.infinite"); }
+    public static boolean allowsIndependent(CombatContext ctx) { return AmmoPolicy.allowsReserve(ctx.config.text("ammo.source")); }
+    public static boolean allowsItems(CombatContext ctx) { return AmmoPolicy.allowsItems(ctx.config.text("ammo.source"), ctx.config.bool("ammo.infinite")); }
+    public static boolean reserveFirst(CombatContext ctx) { return AmmoPolicy.reserveFirst(ctx.config.text("ammo.priority")); }
 
     public int take(CombatContext ctx, GunAdapter adapter, int requested) {
+        if (!CombatService.serverThread(ctx.npc)) return 0;
         int count = Math.max(0, Math.min(100000, requested));
         if (ctx.config.bool("ammo.infinite")) return count;
         String key = adapter.ammoKey(ctx.weapon);
-        int taken = 0;
+        int taken = reserveFirst(ctx) ? takeReserve(ctx, key, count) : 0;
         if (allowsItems(ctx)) {
             AmmoInventory inventory = new AmmoInventory(ctx.npc);
             for (int i = 0; i < inventory.getSlots() && taken < count; i++) {
@@ -102,12 +105,14 @@ public final class AmmoController {
                 if (extracted > 0) { taken += extracted; inventory.changed(i); }
             }
         }
-        if (allowsIndependent(ctx)) taken += takeReserve(ctx, key, count - taken);
+        if (!reserveFirst(ctx)) taken += takeReserve(ctx, key, count - taken);
         return taken;
     }
 
     public int takeReserve(CombatContext ctx, String key, int requested) {
+        if (!CombatService.serverThread(ctx.npc)) return 0;
         if (ctx.config.bool("ammo.infinite")) return Math.max(0, Math.min(100000, requested));
+        if (!allowsIndependent(ctx)) return 0;
         key = key(ctx, key, ctx.weapon);
         int old = independent(key);
         int count = Math.max(0, Math.min(requested, old - ctx.config.integer("ammo.minimumReserve")));

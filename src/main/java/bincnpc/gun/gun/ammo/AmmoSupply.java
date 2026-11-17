@@ -45,7 +45,8 @@ public final class AmmoSupply {
         ctx.npc.updateClient = true;
     }
     public static void pickup(CombatContext ctx) {
-        if (!CombatService.serverThread(ctx.npc) || !ctx.config.bool("ammo.dropSupply") || ctx.config.bool("ammo.infinite") || ctx.now < ctx.runtime.nextDropScan) return;
+        if (!CombatService.serverThread(ctx.npc) || !ctx.config.bool("ammo.dropSupply") || ctx.config.bool("ammo.infinite")
+                || !AmmoController.allowsIndependent(ctx) || ctx.now < ctx.runtime.nextDropScan) return;
         ctx.runtime.nextDropScan = ctx.now + 10;
         List<Weapon> guns = guns(ctx); if (guns.isEmpty()) return;
         int scanned = 0;
