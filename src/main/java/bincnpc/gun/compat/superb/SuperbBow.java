@@ -44,7 +44,7 @@ final class SuperbBow {
                 || ctx.npc.inventory == null || ItemStackWrapper.MCItem(ctx.npc.inventory.getRightHand()) != ctx.weapon
                 || ctx.npc.getTarget() != ctx.target || ctx.now != ctx.npc.level().getGameTime()) return false;
         double distance = ctx.npc.distanceTo(ctx.target);
-        if (distance > Math.min(ctx.config.number("gun.range"), ctx.config.number("combat.attackRange"))
+        if (distance > ctx.gunRange()
                 || distance < ctx.config.number("gun.minRange")) return false;
         if (!ctx.npc.getSensing().hasLineOfSight(ctx.target) && !ctx.canFireWithoutSight()) return false;
         return ctx.npc.onGround() || ctx.config.bool("gun.jumpFire") && ctx.runtime.gunCaps != null && ctx.runtime.gunCaps.canJumpFire;

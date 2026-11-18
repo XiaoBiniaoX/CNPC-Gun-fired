@@ -6,12 +6,13 @@
   "refmap": "cnpcgun.refmap.json",
   "plugin": "bincnpc.gun.mixin.CompatMixinPlugin",
   "mixins": [
+    "NpcTargetSearchMixin", "NpcFollowDistanceMixin", "NpcRangedRangeMixin", "NpcAggroRangeMixin", "NpcLongRangeSightMixin",
     "ScriptGlobalsMixin", "ExternalStoreInvoker", "ExternalPortableMixin",
     "NpcDataMixin", "NpcFriendlyFireMixin", "LivingEffectFriendlyFireMixin", "ProjectileFriendlyFireMixin", "LinkedNpcMixin", "ClonePortableMixin", "RangedAiMixin", "MeleeAiMixin", "ProjectileHitAccess", "ProjectileFactoryAccess",
     "compat.BladeDurabilityMixin", "compat.BladeTargetsMixin", "compat.ArtificeReloadMixin", "compat.TaczReloadMixin", "compat.TaczFireRateMixin", "compat.TaczGunRateMixin", "compat.TaczBurstMixin", "compat.TaczSpreadMixin", "compat.SuperbAmmoMixin", "compat.SuperbFireRateMixin", "compat.PathfindingTacticsMixin", "compat.CgmThrowAccess", "compat.SuperbThrowGravityMixin", "compat.SuperbThrowChunkMixin",
     "compat.TaczFriendlyFireMixin", "compat.CgmFriendlyFireMixin", "compat.ArtificeFriendlyFireMixin", "compat.SuperbFriendlyFireMixin", "compat.SuperbThrowableFriendlyFireMixin", "compat.SuperbDamageFriendlyFireMixin",
     "compat.LrStunFriendlyFireMixin", "compat.LrSplashFriendlyFireMixin", "compat.LrCloudFriendlyFireMixin"
   ],
-  "client": ["GuiNpcMenuMixin", "NpcAnimationMixin", "GunIdlePoseMixin", "compat.BladeLayerPoseMixin", "compat.TaczAnimationAccess", "compat.TaczPoseMixin"],
+  "client": ["NpcRangeGuiMixin", "NpcAggroGuiMixin", "GuiNpcMenuMixin", "NpcAnimationMixin", "GunIdlePoseMixin", "compat.BladeLayerPoseMixin", "compat.TaczAnimationAccess", "compat.TaczPoseMixin"],
   "injectors": {"defaultRequire": 1}
 }

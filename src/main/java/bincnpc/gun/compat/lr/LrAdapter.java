@@ -69,7 +69,7 @@ public final class LrAdapter implements GunAdapter {
                 || ctx.config.revision != state.revision || ctx.runtime.weaponEpoch != state.weaponEpoch || ctx.now > state.expires
                 || state.stack == null || !matches(state.stack) || ctx.npc.getMainHandItem() != state.stack || ctx.weapon != state.stack
                 || !ctx.npc.isUsingItem() || ctx.npc.getUseItem() != state.stack
-                || ctx.distance > Math.min(ctx.config.number("gun.range"), ctx.config.number("combat.attackRange"))
+                || ctx.distance > ctx.gunRange()
                 || ctx.distance < ctx.config.number("gun.minRange")
                 || !ctx.npc.getSensing().hasLineOfSight(ctx.target) && !ctx.canFireWithoutSight()) { cancel(ctx); return; }
         ThrowableItem item = (ThrowableItem)state.stack.getItem();

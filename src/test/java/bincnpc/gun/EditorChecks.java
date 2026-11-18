@@ -2,6 +2,7 @@ package bincnpc.gun;
 
 import bincnpc.gun.client.gui.editor.*;
 import bincnpc.gun.client.gui.editor.EditorLayout.*;
+import bincnpc.gun.api.client.DrawerApi;
 import com.google.gson.*;
 import java.util.*;
 
@@ -10,7 +11,7 @@ public final class EditorChecks {
     private static int checks;
     public static void main(String[] args) { run(); }
     public static void run() {
-        checks = 0; viewports(); menu(); drafts(); graphs();
+        checks = 0; viewports(); menu(); drawers(); drafts(); graphs();
         System.out.println("CNPCGUN_EDITOR_CHECKS=" + checks + " PASSED");
     }
     private static void check(boolean condition, String message) { checks++; if (!condition) throw new AssertionError(message); }
@@ -55,6 +56,10 @@ public final class EditorChecks {
             form(new Box(content.x()+104,content.y(),content.width()-104,content.height()-24), false);
         }
         check(EditorLayout.clampScroll(-100,300,60) == 0 && EditorLayout.clampScroll(999,300,60) == 240 && EditorLayout.clampScroll(999,10,60) == 0, "scroll bounds include short forms");
+        EditorLayout layout = new EditorLayout(320, 240);
+        int drawerHeight = 3 * 24 + 30 * 20;
+        int lastPageY = layout.sidebar.y() + 24 + 29 * 20 - EditorLayout.clampScroll(9999, drawerHeight, layout.sidebar.height());
+        check(inside(layout.sidebar, new Box(layout.sidebar.x() + 6, lastPageY, layout.sidebar.width() - 6, 18)), "expanded addon drawers remain reachable by sidebar scrolling");
     }
     private static void form(Box view, boolean compact) {
         List<FormField> fields = List.of(new FormField(1,true), new FormField(1,false), new FormField(1,true),
@@ -138,6 +143,29 @@ public final class EditorChecks {
             "old editor snapshots recover missing reload controls from schema defaults");
         JsonObject missing = new JsonObject(); missing.add("gun.reloadMaxTicks",JsonNull.INSTANCE);
         check(draft.value(missing,"gun.reloadMaxTicks").getAsInt() == 60 && draft.value(null,"unknown.option").isJsonNull(), "null values use known defaults without inventing unknown fields");
+    }
+    private static void drawers() {
+        var drawer = new net.minecraft.resources.ResourceLocation("editorchecks", "tools");
+        var embedded = new net.minecraft.resources.ResourceLocation("editorchecks", "embedded");
+        var dialog = new net.minecraft.resources.ResourceLocation("editorchecks", "dialog");
+        var title = net.minecraft.network.chat.Component.literal("Extension");
+        DrawerApi.registerDrawer(drawer, title);
+        DrawerApi.registerPage(embedded, drawer, title, context -> null);
+        DrawerApi.registerDialogPage(dialog, drawer, title, context -> null);
+        var pages = DrawerApi.pages(drawer);
+        check(pages.size() == 2 && pages.get(0).id().equals(embedded) && !pages.get(0).dialog()
+            && pages.get(1).dialog(), "work area is the default; dialogs have a distinct entry point");
+        rejected(() -> DrawerApi.registerPage(embedded, drawer, title, context -> null), "duplicate extension page rejected");
+        rejected(() -> DrawerApi.registerDrawer(DrawerApi.GUN, title), "built-in drawers cannot be replaced");
+        rejected(() -> DrawerApi.registerPage(new net.minecraft.resources.ResourceLocation("editorchecks", "missing"),
+            new net.minecraft.resources.ResourceLocation("editorchecks", "unknown"), title, context -> null), "unknown drawer rejected");
+        JsonObject summary = new JsonObject(); summary.addProperty("value", 1);
+        int[] closed = new int[2];
+        var context = new DrawerApi.Context(new UUID(0, 1), summary, screen -> {}, () -> closed[0]++, () -> closed[1]++);
+        summary.addProperty("value", 2); context.snapshot().addProperty("value", 3);
+        check(context.snapshot().get("value").getAsInt() == 1, "embedded page receives only detached summary copies");
+        context.closeDialog().run(); context.closePage().run();
+        check(closed[0] == 1 && closed[1] == 1, "closing a nested dialog is distinct from leaving its work area page");
     }
     private static JsonObject sample() {
         return JsonParser.parseString("""

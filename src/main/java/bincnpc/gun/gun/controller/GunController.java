@@ -67,7 +67,7 @@ public final class GunController {
             return;
         }
         if (!ctx.runtime.command.equals("AUTO") || !ctx.config.bool("gun.autoAttack") || ctx.runtime.fireStopped) return;
-        double range = Math.min(ctx.config.number("gun.range"), ctx.config.number("combat.attackRange"));
+        double range = ctx.gunRange();
         if (ctx.distance > range) {
             if (ctx.now >= ctx.runtime.nextDecision) ctx.npc.getNavigation().moveTo(ctx.target, 1);
             CombatService.setState(ctx, "APPROACHING"); return;
@@ -100,7 +100,7 @@ public final class GunController {
         if (ctx.runtime.gunCaps == null || !ctx.runtime.gunCaps.canFire) return Result.fail("UNSUPPORTED");
         if (!ctx.validTarget()) return Result.fail("INVALID_TARGET");
         syncTiming(ctx, adapter);
-        if (ctx.distance > Math.min(ctx.config.number("gun.range"), ctx.config.number("combat.attackRange"))
+        if (ctx.distance > ctx.gunRange()
                 || ctx.distance < ctx.config.number("gun.minRange")) return Result.fail("OUT_OF_RANGE");
         if (!ctx.npc.getSensing().hasLineOfSight(ctx.target) && !ctx.canFireWithoutSight())
             return Result.fail("CONDITION_NOT_MET");

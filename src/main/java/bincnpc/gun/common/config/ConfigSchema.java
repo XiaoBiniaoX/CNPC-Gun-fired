@@ -6,14 +6,14 @@ import java.util.*;
 public final class ConfigSchema {
     private static final Map<String, Parameter> FIELDS = new LinkedHashMap<>();
     static {
-        add(bool("combat.enabled", true), bool("combat.disableFriendlyFire", true), number("combat.attackRange", 32, 1, 128),
+        add(bool("combat.enabled", true), bool("combat.disableFriendlyFire", true),
             bool("combat.movement", true), bool("combat.pathfinding", true),
             bool("combat.stopOnInvalidTarget", true), bool("combat.allowTargetChange", true),
             integer("combat.decisionInterval", 10, 4, 100),
             integer("weapon.primarySlot", 0, 0, 5), bool("weapon.autoSwitch", true), number("weapon.meleeDistance", 4, 0, 32),
             number("weapon.lowHealth", 0.3, 0, 1), integer("weapon.switchCooldown", 20, 1, 200),
             bool("gun.enabled", true), bool("gun.autoAttack", true),
-            number("gun.minRange", 0, 0, 128), number("gun.range", 32, 1, 128),
+            number("gun.minRange", 0, 0, 2048), integer("gun.range", 15, 0, 2048),
             bool("gun.requireAim", true).requires("gun.aim"), bool("gun.moveFire", true),
             bool("gun.jumpFire", false).requires("gun.jump_fire"),
             bool("gun.blindFire", false).requires("gun.blind_fire"),
@@ -72,9 +72,9 @@ public final class ConfigSchema {
         for (int i = 0; i < 6; i++) {
             add(integer("weapon.slot" + i + ".priority", 100 - i * 10, 0, 1000),
                 bool("weapon.slot" + i + ".minRangeEnabled", true),
-                number("weapon.slot" + i + ".minRange", i < 2 ? 12 : 0, 0, 128),
+                number("weapon.slot" + i + ".minRange", i < 2 ? 12 : 0, 0, 2048),
                 bool("weapon.slot" + i + ".maxRangeEnabled", true),
-                number("weapon.slot" + i + ".maxRange", i >= 4 ? 6 : i >= 2 ? 20 : 64, 0, 128),
+                number("weapon.slot" + i + ".maxRange", i >= 4 ? 6 : i >= 2 ? 20 : 64, 0, 2048),
                 bool("weapon.slot" + i + ".maxHealthEnabled", false),
                 number("weapon.slot" + i + ".maxHealth", 1, 0, 1));
         }

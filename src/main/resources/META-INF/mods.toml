@@ -4,8 +4,8 @@ license="GPLv3"
 
 [[mods]]
 modId="cnpcgun"
-version="1.1.0"
-displayName="CNPC-Gun for 1.20.1 V1.1.0"
+version="1.2.0"
+displayName="CNPC-Gun for 1.20.1 V1.2.0"
 authors="XiaoBiniaoX"
 description='''CustomNPCs 枪械与拔刀剑控制扩展，提供六槽武器切换、动态动作库、条件连招及统一脚本 API。'''
 

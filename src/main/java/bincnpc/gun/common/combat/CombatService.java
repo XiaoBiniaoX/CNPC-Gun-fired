@@ -199,6 +199,9 @@ public final class CombatService {
             ctx.runtime.bladeCaps == null ? null : SafeJson.GSON.fromJson(SafeJson.GSON.toJson(ctx.runtime.bladeCaps), Views.BladeCaps.class),
             !ctx.runtime.scheduler.busy(ctx.now));
     }
+    public static JsonElement getConfig(CombatContext ctx, String key) {
+        return "gun.range".equals(key) ? new JsonPrimitive(ctx.gunRange()) : ctx.config.get(key);
+    }
     public static Result setConfig(CombatContext ctx, String key, Object value) {
         Parameter parameter = ConfigSchema.get(key);
         if (parameter == null) return Result.fail("NOT_FOUND");
@@ -208,8 +211,9 @@ public final class CombatService {
             if (key.equals("slashblade.preset")) return bincnpc.gun.slashblade.strategy.Presets.apply(ctx, checked.getAsString());
             if (key.equals("gun.firingMode") && !EditorWeapons.firingMode(ctx, checked.getAsString())) return Result.fail("UNSUPPORTED");
             NpcConfig prospective = new NpcConfig(ctx.config.snapshot());
-            prospective.set(key, checked); validateRanges(prospective);
+            prospective.set(key, checked); validateRanges(prospective, key.equals("gun.range") ? checked.getAsInt() : ctx.gunRange());
             ctx.config.set(key, checked);
+            if (key.equals("gun.range")) ctx.npc.stats.ranged.setRange(checked.getAsInt());
             if (key.equals("gun.enabled") || key.equals("gun.autoAttack")) ctx.runtime.fireStopped = false;
             ctx.runtime.noAmmoRetry = 0;
             return Result.success(SafeJson.plain(checked));
@@ -227,14 +231,16 @@ public final class CombatService {
                 if (p.id.equals("gun.firingMode") && !EditorWeapons.firingMode(ctx, value.getAsString())) return Result.fail("UNSUPPORTED");
                 candidate.set(p.id, value);
             }
-            validateRanges(candidate); ctx.config.replace(candidate.snapshot());
+            validateRanges(candidate, values.has("gun.range") ? candidate.integer("gun.range") : ctx.gunRange());
+            ctx.config.replace(candidate.snapshot());
+            if (values.has("gun.range")) ctx.npc.stats.ranged.setRange(candidate.integer("gun.range"));
             if (values.has("gun.enabled") || values.has("gun.autoAttack")) ctx.runtime.fireStopped = false;
             ctx.runtime.noAmmoRetry = 0;
             return Result.success();
         } catch (IllegalArgumentException | IllegalStateException e) { return Result.fail("INVALID_ARGUMENT"); }
     }
-    public static void validateRanges(NpcConfig config) {
-        if (config.number("gun.minRange") > config.number("gun.range")
+    public static void validateRanges(NpcConfig config, int gunRange) {
+        if (config.number("gun.minRange") > gunRange
             || config.integer("gun.minInterval") > config.integer("gun.maxInterval")
             || config.integer("gun.reloadMinTicks") > config.integer("gun.reloadMaxTicks")
             || config.integer("ammo.minimumReserve") > config.integer("ammo.reserveLimit")) throw new IllegalArgumentException("invalid range");

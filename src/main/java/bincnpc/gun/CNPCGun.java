@@ -20,7 +20,7 @@ import noppes.npcs.entity.EntityNPCInterface;
 @Mod(CNPCGun.MOD_ID)
 public final class CNPCGun {
     public static final String MOD_ID = "cnpcgun";
-    public static final String VERSION = "1.1.0";
+    public static final String VERSION = "1.2.0";
     public static final String API_VERSION = "1";
     public static final Logger LOGGER = LogUtils.getLogger();
 
@@ -50,6 +50,7 @@ public final class CNPCGun {
         AdapterRegistry.initialize();
         GunNetwork.startWorker();
         bincnpc.gun.common.combat.CombatDecisions.start();
+        bincnpc.gun.common.combat.LongRangeTargets.clear();
         bincnpc.gun.throwing.ThrowPlanner.start();
         LOGGER.info("CNPC Gun {} initialized; adapters: {}", VERSION, AdapterRegistry.ids());
     }
@@ -61,6 +62,7 @@ public final class CNPCGun {
         bincnpc.gun.throwing.ThrowFlights.stop(event.getServer());
         bincnpc.gun.throwing.ThrowPlanner.stop();
         bincnpc.gun.common.combat.CombatDecisions.stop();
+        bincnpc.gun.common.combat.LongRangeTargets.clear();
         GunNetwork.stopWorker();
         AdapterRegistry.clear();
     }

@@ -25,7 +25,7 @@ public final class NpcConfig {
             root.addProperty("migratedFromSchema", 0); version = SCHEMA;
         }
         root.addProperty("schemaVersion", version);
-        repairRange("gun.minRange", "gun.range");
+        // gun.range is presented/applied from CNPC's native ranged stats, not this legacy stored copy.
         repairRange("gun.minInterval", "gun.maxInterval");
         repairRange("gun.reloadMinTicks", "gun.reloadMaxTicks");
         repairRange("ammo.minimumReserve", "ammo.reserveLimit");

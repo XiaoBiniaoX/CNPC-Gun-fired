@@ -172,7 +172,7 @@ public final class SuperbAdapter implements GunAdapter {
         double recoil = ctx.config.bool("gun.applyRecoil") ? ctx.config.number("gun.recoilMultiplier") : 0;
         boolean override = ctx.config.bool("gun.overrideNativeRate");
         int rpm = Math.max(1, (int)Math.ceil(1200.0 / bincnpc.gun.gun.controller.GunController.configuredNativeInterval(ctx)));
-        int range = (int)ctx.config.number("gun.range");
+        int range = ctx.gunRange();
         int reloadTicks = ctx.runtime.reloadTargetTicks;
         Object roundState = ctx.runtime.adapterState.get("superb.reloadRounds");
         int rounds = roundState instanceof Integer count ? count : Math.max(0, gun.get(GunProp.MAGAZINE) - gun.ammo.get());
@@ -211,8 +211,10 @@ public final class SuperbAdapter implements GunAdapter {
         GunData gun = gun(ctx.weapon);
         Object prior = ctx.runtime.adapterState.get("revision");
         if (!(prior instanceof Long revision) || revision != ctx.config.revision
-                || !Objects.equals(ctx.runtime.adapterState.get("superb.reloadTicks"), ctx.runtime.reloadTargetTicks)) {
+                || !Objects.equals(ctx.runtime.adapterState.get("superb.reloadTicks"), ctx.runtime.reloadTargetTicks)
+                || !Objects.equals(ctx.runtime.adapterState.get("superb.range"), ctx.gunRange())) {
             applyParameters(ctx); ctx.runtime.adapterState.put("revision", ctx.config.revision);
+            ctx.runtime.adapterState.put("superb.range", ctx.gunRange());
         }
         gun.tick(ctx.npc, true);
         if (gun.shouldStartBolt()) gun.startBolt();

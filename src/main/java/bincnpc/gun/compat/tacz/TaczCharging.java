@@ -42,7 +42,7 @@ final class TaczCharging {
             && ctx.runtime.command.equals("AUTO") && ctx.validTarget()
             && ctx.weapon == ctx.npc.getMainHandItem() && !ctx.runtime.reloading
             && ctx.distance >= ctx.config.number("gun.minRange")
-            && ctx.distance <= Math.min(ctx.config.number("gun.range"), ctx.config.number("combat.attackRange"))
+            && ctx.distance <= ctx.gunRange()
             && (ctx.npc.getSensing().hasLineOfSight(ctx.target) || ctx.canFireWithoutSight());
     }
     private static boolean matches(State state, CombatContext ctx, FireMode mode, ChargeData data) {

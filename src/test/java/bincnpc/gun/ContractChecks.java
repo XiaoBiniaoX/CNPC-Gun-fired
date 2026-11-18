@@ -2,6 +2,8 @@ package bincnpc.gun;
 
 import bincnpc.gun.common.api.*;
 import bincnpc.gun.common.combat.CombatDecisions;
+import bincnpc.gun.common.combat.CombatService;
+import bincnpc.gun.common.combat.TargetSearch;
 import bincnpc.gun.common.combat.Scheduler;
 import bincnpc.gun.common.combat.Prefire;
 import bincnpc.gun.common.config.*;
@@ -23,7 +25,7 @@ import java.util.*;
 public final class ContractChecks {
     private static int checks;
     public static void main(String[] args) throws Exception {
-        json(); schema(); graphs(); scheduling(); combatDecisions(); ballistics(); throwingPolicy(); reloadTiming(); ammunitionPolicy(); recoil(); firing(); bowDraw(); presets(); api();
+        json(); schema(); graphs(); scheduling(); combatDecisions(); targetSearch(); ballistics(); throwingPolicy(); reloadTiming(); ammunitionPolicy(); recoil(); firing(); bowDraw(); presets(); api();
         EditorChecks.run();
         System.out.println("CNPCGUN_CONTRACT_CHECKS=" + checks + " PASSED");
     }
@@ -93,9 +95,25 @@ public final class ContractChecks {
         check(legacy.integer("gun.fireInterval") == 7 && legacy.snapshot().get("schemaVersion").getAsInt() == NpcConfig.SCHEMA, "schema zero flat fields migrate");
         check(legacy.snapshot().get("futureField").getAsInt() == 9, "migration retains unknown fields");
         NpcConfig ranges = new NpcConfig(SafeJson.parseObject("{\"values\":{\"gun.minRange\":60,\"gun.range\":20,\"ammo.minimumReserve\":200,\"ammo.reserveLimit\":100}}"));
-        check(ranges.number("gun.minRange") <= ranges.number("gun.range") && ranges.integer("ammo.minimumReserve") <= ranges.integer("ammo.reserveLimit"), "stored ranges recover to valid pairs");
-        check(ranges.snapshot().getAsJsonObject("recoveredRanges").get("gun.minRange").getAsInt() == 60, "invalid original range retained for recovery");
+        check(ranges.number("gun.minRange") == 60 && ranges.number("gun.range") == 20, "legacy range copy cannot reset the native firing controls");
+        check(ranges.integer("ammo.minimumReserve") <= ranges.integer("ammo.reserveLimit")
+            && ranges.snapshot().getAsJsonObject("recoveredRanges").get("ammo.minimumReserve").getAsInt() == 200, "invalid ammunition pair retained for recovery");
+        CombatService.validateRanges(ranges, 2048);
+        rejected(() -> CombatService.validateRanges(ranges, 20), "range pair validation uses the supplied native range");
+        check(ConfigSchema.get("combat.attackRange") == null, "no duplicate total attack distance setting");
+        rejected(() -> ConfigSchema.get("gun.range").validate(new JsonPrimitive(12.5)), "native range is an integer");
         check(new NpcConfig(SafeJson.parseObject("{\"schemaVersion\":2,\"futureField\":8}")).snapshot().get("schemaVersion").getAsInt() == 2, "future schema version retained");
+        List<String> distances = new ArrayList<>(List.of("gun.minRange", "gun.range"));
+        for (int slot = 0; slot < 6; slot++) for (String bound : List.of("minRange", "maxRange")) distances.add("weapon.slot" + slot + "." + bound);
+        for (String key : distances) {
+            Parameter p = ConfigSchema.get(key);
+            check(p.validate(new JsonPrimitive(0)).getAsDouble() == 0 && p.validate(new JsonPrimitive(2048)).getAsDouble() == 2048, "inclusive NPC distance bounds: " + key);
+            rejected(() -> p.validate(new JsonPrimitive(-1)), "negative NPC distance: " + key);
+            rejected(() -> p.validate(new JsonPrimitive(2049)), "oversized NPC distance: " + key);
+        }
+        NpcConfig longRange = new NpcConfig(SafeJson.parseObject("{\"values\":{\"gun.range\":2048,\"weapon.slot0.maxRange\":2048}}"));
+        check(new NpcConfig(longRange.snapshot()).number("gun.range") == 2048 && longRange.number("weapon.slot0.maxRange") == 2048, "2048-block ranges survive persistence without default recovery");
+        CombatService.validateRanges(new NpcConfig(), 0);
     }
     private static ActionRegistry.Definition definition(String id, String type, String... tags) {
         return new ActionRegistry.Definition(new Views.ActionInfo(id, type, "tests", "tests.action", "tests.description", 20, 3,
@@ -265,6 +283,29 @@ public final class ContractChecks {
         rejected(() -> new CombatDecisions.Weapon(6, "tests:invalid", false, true, 1, 30, 1), "candidate slot bound");
         rejected(() -> new CombatDecisions.Weapon(0, "", false, true, 1, 30, 1), "candidate identity required");
         rejected(() -> new CombatDecisions.Weapon(0, "tests:invalid", true, true, 1, 30, 1), "candidate domain must be unambiguous");
+    }
+    private static void targetSearch() throws Exception {
+        UUID npc = new UUID(0, 1), near = new UUID(0, 2), edge = new UUID(0, 3), above = new UUID(0, 4), outside = new UUID(0, 5);
+        var entities = new ArrayList<>(List.of(new TargetSearch.Candidate(edge, 2048, 0, 0), new TargetSearch.Candidate(npc, 0, 0, 0),
+            new TargetSearch.Candidate(near, 160, 0, 0), new TargetSearch.Candidate(above, 0, 1024, 0), new TargetSearch.Candidate(outside, 2048.01, 0, 0)));
+        var snapshot = new TargetSearch.Snapshot(npc, "minecraft:overworld", 100, 0, 0, 0, 2048, entities);
+        entities.clear();
+        check(TargetSearch.rank(snapshot).equals(List.of(near, above, edge)), "async ranking includes real 3D long-range targets and the 2048 boundary, excludes self and outside");
+        check(TargetSearch.rank(new TargetSearch.Snapshot(npc, "minecraft:overworld", 100, 0, 0, 0, 0, snapshot.entities())).isEmpty(), "zero acquisition range is not unlimited");
+        check(snapshot.matches(npc, "minecraft:overworld", 180, 2048, 16, 0, 0), "maximum snapshot age and source displacement accepted");
+        check(!snapshot.matches(npc, "minecraft:overworld", 181, 2048, 0, 0, 0) && !snapshot.matches(npc, "minecraft:overworld", 99, 2048, 0, 0, 0), "expired and future search snapshots rejected");
+        check(!snapshot.matches(near, "minecraft:overworld", 101, 2048, 0, 0, 0) && !snapshot.matches(npc, "minecraft:the_nether", 101, 2048, 0, 0, 0)
+            && !snapshot.matches(npc, "minecraft:overworld", 101, 2047, 0, 0, 0) && !snapshot.matches(npc, "minecraft:overworld", 101, 2048, 17, 0, 0), "changed NPC, world, range and moved source reject old searches");
+        rejected(() -> new TargetSearch.Candidate(near, Double.NaN, 0, 0), "invalid search coordinates rejected at capture boundary");
+        rejected(() -> new TargetSearch.Snapshot(npc, "minecraft:overworld", 100, 0, 0, 0, 2049, List.of()), "search upper bound");
+        check(CombatDecisions.submitSearch(snapshot) == null, "stopped server has no search worker");
+        CombatDecisions.start();
+        try {
+            var result = CombatDecisions.submitSearch(snapshot).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            check(result.currentGeneration() && result.targets().equals(List.of(near, above, edge)), "shared worker executes only immutable coordinate ranking");
+            CombatDecisions.stop();
+            check(!result.currentGeneration(), "server shutdown invalidates completed search results");
+        } finally { CombatDecisions.stop(); }
     }
     private static Ballistics.Request throwRequest(Ballistics.Trajectory mode, Ballistics.Vec target, Ballistics.Vec movement, int lead) {
         return new Ballistics.Request(new Ballistics.Vec(0, 1.6, 0), target, movement,
@@ -444,7 +485,7 @@ public final class ContractChecks {
             {"GunProxy", "fire", "stopFire", "reload", "getAmmoState", "setFiringMode", "getRecoil"},
             {"BladeProxy", "getAvailableActions", "executeAction", "useSpecialAttack", "setCombo", "startCombo", "stopCombo", "setPreset"},
             {"AmmoProxy", "getState", "addReserveAmmo", "setReserveAmmo", "setNoAmmoBehavior"},
-            {"CombatProxy", "getTarget", "requestRetreat", "requestHoldPosition", "requestAttack"}
+            {"CombatProxy", "getTarget", "getAttackRange", "setAttackRange", "requestRetreat", "requestHoldPosition", "requestAttack"}
         };
         for (String[] contract : methods) {
             Set<String> present = new HashSet<>();

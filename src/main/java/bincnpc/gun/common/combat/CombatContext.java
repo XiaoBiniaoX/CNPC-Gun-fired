@@ -32,18 +32,22 @@ public final class CombatContext {
     }
     public CombatContext withWeapon(ItemStack stack) { return new CombatContext(npc, target, stack); }
     public boolean validTarget() { return CombatService.validTarget(npc, target); }
+    /** One firing-range source shared with the native CNPC editor and scripts. */
+    public int gunRange() { return npc.stats.ranged.getRange(); }
     public List<LivingEntity> targets() {
         if (now >= runtime.nextTargetScan) {
             runtime.nearbyTargets.clear();
-            double range = Math.min(config.number("combat.attackRange"), 32);
-            for (LivingEntity e : npc.level().getEntitiesOfClass(LivingEntity.class, npc.getBoundingBox().inflate(range),
-                    e -> CombatService.hostile(npc, e))) {
+            double range = Math.max(npc.stats.aggroRange, gunRange());
+            // Only loaded entities: a 2048-block AABB would iterate tens of thousands of empty chunk sections.
+            for (var entity : ((net.minecraft.server.level.ServerLevel)npc.level()).getAllEntities()) {
                 if (runtime.nearbyTargets.size() >= 16) break;
-                runtime.nearbyTargets.add(e);
+                if (entity instanceof LivingEntity living && npc.distanceToSqr(living) <= range * range && CombatService.hostile(npc, living))
+                    runtime.nearbyTargets.add(living);
             }
             runtime.nextTargetScan = now + config.integer("combat.decisionInterval");
         }
-        return runtime.nearbyTargets.stream().filter(e -> CombatService.validTarget(npc, e)).toList();
+        double range = Math.max(npc.stats.aggroRange, gunRange());
+        return runtime.nearbyTargets.stream().filter(e -> npc.distanceToSqr(e) <= range * range && CombatService.hostile(npc, e)).toList();
     }
     public float yaw() {
         if (target == null) return npc.getYRot();
@@ -58,7 +62,7 @@ public final class CombatContext {
     public boolean isPrefiring() {
         String mode = config.text("gun.prefire");
         if ((!mode.equals("TRACK") && !mode.equals("SWEEP")) || !validTarget() || target != npc.getTarget()
-                || npc.getEyePosition().distanceToSqr(target.getEyePosition()) > 128 * 128) return false;
+                || distance > gunRange()) return false;
         return Prefire.active(mode, true, npc.getSensing().hasLineOfSight(target));
     }
     public boolean canFireWithoutSight() { return config.bool("gun.blindFire") || isPrefiring(); }

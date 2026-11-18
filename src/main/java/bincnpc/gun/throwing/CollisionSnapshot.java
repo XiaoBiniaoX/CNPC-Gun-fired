@@ -7,6 +7,11 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.*;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import noppes.npcs.entity.EntityNPCInterface;
@@ -98,10 +103,24 @@ public final class CollisionSnapshot {
     /** A ray is allowed only through loaded cells; the copied flight path provides the longer-term check. */
     public static boolean clear(ServerLevel level, Entity entity, Vec3 start, Vec3 end) {
         requireThread(level);
-        if (start.distanceToSqr(end) > 128 * 128) return false;
-        try { for (var cell : Ballistics.cells(vector(start), vector(end), 0, 1024)) if (!loadedShape(level, new BlockPos(cell.x(), cell.y(), cell.z()))) return false; }
-        catch (IllegalArgumentException tooLarge) { return false; }
-        return level.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, entity)).getType() == HitResult.Type.MISS;
+        if (!Double.isFinite(start.x) || !Double.isFinite(start.y) || !Double.isFinite(start.z)
+                || !Double.isFinite(end.x) || !Double.isFinite(end.y) || !Double.isFinite(end.z) || start.distanceToSqr(end) > 4096.0 * 4096.0) return false;
+        BlockGetter view = new BlockGetter() {
+            @Override public BlockState getBlockState(BlockPos pos) {
+                if (level.isOutsideBuildHeight(pos)) return Blocks.AIR.defaultBlockState();
+                var chunk = level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4);
+                return chunk == null ? Blocks.BARRIER.defaultBlockState() : chunk.getBlockState(pos);
+            }
+            @Override public FluidState getFluidState(BlockPos pos) { return getBlockState(pos).getFluidState(); }
+            @Override public BlockEntity getBlockEntity(BlockPos pos) {
+                var chunk = level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4);
+                return chunk == null ? null : chunk.getBlockEntity(pos);
+            }
+            @Override public int getHeight() { return level.getHeight(); }
+            @Override public int getMinBuildHeight() { return level.getMinBuildHeight(); }
+        };
+        // Shared by NPC sight and projectile flight. Neighbor shape reads also stay in the non-loading view.
+        return view.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, entity)).getType() == HitResult.Type.MISS;
     }
     public static boolean stepClear(ServerLevel level, Entity projectile, Vec3 from, Vec3 to) {
         if (!clear(level, projectile, from, to)) return false;

@@ -15,7 +15,7 @@ public final class EditorSnapshot {
     private EditorSnapshot() {}
     public static JsonObject create(CombatContext ctx) {
         JsonObject out = new JsonObject(), values = new JsonObject();
-        for (Parameter p : ConfigSchema.all()) values.add(p.id, ctx.config.get(p.id));
+        for (Parameter p : ConfigSchema.all()) values.add(p.id, CombatService.getConfig(ctx, p.id));
         out.add("values", values);
         out.add("schema", SafeJson.GSON.toJsonTree(ConfigSchema.all()));
         out.add("weapon", SafeJson.GSON.toJsonTree(CombatService.weaponInfo(ctx.weapon, null)));

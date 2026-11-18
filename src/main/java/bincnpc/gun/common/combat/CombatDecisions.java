@@ -109,6 +109,18 @@ public final class CombatDecisions {
             try { executor.execute(ticket); return ticket; } catch (RejectedExecutionException full) { return null; }
         }
     }
+    public record SearchResult(TargetSearch.Snapshot snapshot, List<UUID> targets, long generation) {
+        public boolean currentGeneration() { return generation == CombatDecisions.generation; }
+    }
+    /** Shares the existing bounded two-thread worker; the callable captures only a pure snapshot. */
+    public static FutureTask<SearchResult> submitSearch(TargetSearch.Snapshot snapshot) {
+        synchronized (LIFECYCLE) {
+            if (executor == null || executor.isShutdown()) return null;
+            long epoch = generation;
+            FutureTask<SearchResult> task = new FutureTask<>(() -> new SearchResult(snapshot, TargetSearch.rank(snapshot), epoch));
+            try { executor.execute(task); return task; } catch (RejectedExecutionException full) { return null; }
+        }
+    }
     public static void start() {
         synchronized (LIFECYCLE) {
             stop(); generation++;
@@ -122,7 +134,10 @@ public final class CombatDecisions {
     public static void stop() {
         synchronized (LIFECYCLE) {
             generation++; ThreadPoolExecutor previous = executor; executor = null;
-            if (previous != null) for (Runnable pending : previous.shutdownNow()) if (pending instanceof Ticket ticket) ticket.cancel();
+            if (previous != null) for (Runnable pending : previous.shutdownNow()) {
+                if (pending instanceof Ticket ticket) ticket.cancel();
+                else if (pending instanceof Future<?> future) future.cancel(false);
+            }
         }
     }
 }
