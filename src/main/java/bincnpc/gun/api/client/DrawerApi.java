@@ -15,7 +15,7 @@ public final class DrawerApi {
     public static final ResourceLocation BLADE = new ResourceLocation("cnpcgun", "blade");
     public record Drawer(ResourceLocation id, Component title) {}
     public record Page(ResourceLocation id, ResourceLocation drawer, Component title, Function<Context, Screen> factory, boolean dialog) {}
-    /** Entry-time summary only. closePage leaves the content page; closeDialog pops only the top dialog. */
+    /** Entry-time summary only. closePage consults LeaveHandler; closeDialog directly pops the top dialog. */
     public record Context(UUID npcId, JsonObject snapshot, Consumer<Screen> openDialog, Runnable closeDialog, Runnable closePage) {
         public Context { snapshot = snapshot.deepCopy(); }
         @Override public JsonObject snapshot() { return snapshot.deepCopy(); }

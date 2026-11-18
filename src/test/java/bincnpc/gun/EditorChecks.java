@@ -3,6 +3,10 @@ package bincnpc.gun;
 import bincnpc.gun.client.gui.editor.*;
 import bincnpc.gun.client.gui.editor.EditorLayout.*;
 import bincnpc.gun.api.client.DrawerApi;
+import bincnpc.gun.api.client.LeaveHandler;
+import bincnpc.gun.common.config.ConfigSchema;
+import bincnpc.gun.common.config.Parameter;
+import bincnpc.gun.slashblade.action.ActionConfig;
 import com.google.gson.*;
 import java.util.*;
 
@@ -11,7 +15,7 @@ public final class EditorChecks {
     private static int checks;
     public static void main(String[] args) { run(); }
     public static void run() {
-        checks = 0; viewports(); menu(); drawers(); drafts(); graphs();
+        checks = 0; viewports(); menu(); drawers(); leaving(); languages(); drafts(); graphs();
         System.out.println("CNPCGUN_EDITOR_CHECKS=" + checks + " PASSED");
     }
     private static void check(boolean condition, String message) { checks++; if (!condition) throw new AssertionError(message); }
@@ -175,6 +179,47 @@ public final class EditorChecks {
               {"id":"fallback","action":"slashblade:test/fallback","onSuccess":"target","onTimeout":"target"},
               {"id":"wait","action":"slashblade:test/wait","onFailure":"target"}]}
             """).getAsJsonObject();
+    }
+    private static void leaving() {
+        var methods = LeaveHandler.class.getDeclaredMethods();
+        check(LeaveHandler.class.isInterface() && java.lang.reflect.Modifier.isPublic(LeaveHandler.class.getModifiers())
+            && methods.length == 1 && methods[0].getName().equals("requestLeave") && methods[0].getReturnType() == void.class
+            && Arrays.equals(methods[0].getParameterTypes(), new Class<?>[]{Runnable.class}), "optional public leave hook has the exact addon contract");
+        int[] left = {0}; Runnable leave = () -> left[0]++;
+        LeaveHandler clean = Runnable::run;
+        clean.requestLeave(leave);
+        check(left[0] == 1, "a clean addon page can continue immediately");
+        LeaveHandler cancelled = continuation -> {};
+        cancelled.requestLeave(leave);
+        check(left[0] == 1, "cancelled addon departure does not run its continuation");
+        Runnable[] pending = {null}; LeaveHandler saving = continuation -> pending[0] = continuation;
+        saving.requestLeave(leave);
+        check(left[0] == 1 && pending[0] != null, "addon save can retain the continuation without leaving");
+        pending[0].run();
+        check(left[0] == 2, "addon save acknowledgement can finish the deferred departure");
+    }
+    private static void languages() {
+        List<Parameter> fields = new ArrayList<>(Arrays.asList(ConfigSchema.all()));
+        fields.addAll(Arrays.asList(ActionConfig.SCHEMA));
+        Set<String> keys = new HashSet<>(); fields.forEach(field -> keys.add(field.label));
+        for (String setting : List.of("gun.prefire", "gun.lostSight", "ammo.reloadTiming", "ammo.source", "ammo.priority"))
+            for (String option : ConfigSchema.get(setting).values) keys.add("cnpcgun.editor.option." + option.toLowerCase(Locale.ROOT));
+        keys.add("cnpcgun.editor.option.reload_native"); keys.add("cnpcgun.editor.option.reload_custom");
+        for (int slot = 0; slot < 3; slot++) for (String setting : List.of("timing", "trajectory", "area", "lostTarget"))
+            for (String option : ConfigSchema.get("throw.slot" + slot + "." + setting).values) keys.add("cnpcgun.editor.throw.option." + option.toLowerCase(Locale.ROOT));
+        Set<String> previous = null;
+        for (String locale : List.of("en_us", "zh_cn")) {
+            String path = "/assets/cnpcgun/lang/" + locale + ".json";
+            try (var stream = EditorChecks.class.getResourceAsStream(path)) {
+                check(stream != null, "bundled locale exists: " + locale);
+                JsonObject entries = JsonParser.parseString(new String(stream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
+                check(entries.entrySet().stream().allMatch(entry -> entry.getValue().isJsonPrimitive()
+                    && entry.getValue().getAsJsonPrimitive().isString() && !entry.getValue().getAsString().isBlank()), "locale entries contain text: " + locale);
+                for (String key : keys) check(entries.has(key), "schema labels and computed tooltips have language text: " + locale + " / " + key);
+                if (previous != null) check(previous.equals(entries.keySet()), "Chinese and English locale keys match");
+                previous = new HashSet<>(entries.keySet());
+            } catch (java.io.IOException failure) { throw new AssertionError("Could not read " + path, failure); }
+        }
     }
     private static void graphs() {
         JsonObject source=sample(); GraphDraft draft=new GraphDraft(source,"combo"); draft.validateEdges();
