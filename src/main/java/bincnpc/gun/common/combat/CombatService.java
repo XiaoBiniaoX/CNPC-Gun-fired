@@ -23,9 +23,12 @@ import noppes.npcs.entity.EntityNPCInterface;
 public final class CombatService {
     private CombatService() {}
     public static NpcData data(EntityNPCInterface npc) { return ((NpcAccess)npc).cnpcgun$data(); }
-    public static boolean validNpc(EntityNPCInterface npc) {
-        return npc != null && npc.isAlive() && !npc.isRemoved() && !npc.isKilled()
+    public static boolean presentNpc(EntityNPCInterface npc) {
+        return npc != null && !npc.isRemoved()
             && npc.level() instanceof ServerLevel level && level.getEntity(npc.getUUID()) == npc;
+    }
+    public static boolean validNpc(EntityNPCInterface npc) {
+        return presentNpc(npc) && npc.isAlive() && !npc.isKilled();
     }
     public static boolean serverThread(EntityNPCInterface npc) {
         return npc != null && npc.getServer() != null && npc.getServer().isSameThread() && !npc.level().isClientSide;
@@ -447,7 +450,9 @@ public final class CombatService {
     }
     public static void endEditing(CombatContext ctx) {
         if (!serverThread(ctx.npc)) return;
-        ctx.runtime.editorUntil = 0; ctx.runtime.editorPaused = false; restoreDefaults(ctx);
+        ctx.runtime.editorUntil = 0; ctx.runtime.editorPaused = false;
+        if (validNpc(ctx.npc)) restoreDefaults(ctx);
+        else ctx.runtime.restoreSupplies = true;
     }
     private static void restoreDefaults(CombatContext ctx) {
         ctx.data.throwing.cancel();

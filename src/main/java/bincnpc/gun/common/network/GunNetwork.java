@@ -17,10 +17,12 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Supplier;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.network.*;
@@ -69,9 +71,10 @@ public final class GunNetwork {
     }
     private static final class Session {
         final UUID npcId, token = UUID.randomUUID();
+        final ResourceKey<Level> dimension;
         int lastRequest, pending;
         long expires;
-        Session(UUID npcId, long now) { this.npcId = npcId; expires = now + 1200; }
+        Session(UUID npcId, ResourceKey<Level> dimension, long now) { this.npcId = npcId; this.dimension = dimension; expires = now + 1200; }
     }
     private static final class Rate { long window; int count; }
     private static final Map<UUID, Session> SESSIONS = new HashMap<>();
@@ -105,30 +108,37 @@ public final class GunNetwork {
     }
     private static void finishEditing(ServerPlayer player, Session ended) {
         if (ended == null || player.getServer() == null) return;
-        for (var level : player.getServer().getAllLevels()) {
-            var entity = level.getEntity(ended.npcId);
-            if (!(entity instanceof EntityNPCInterface npc) || !CombatService.validNpc(npc)) continue;
-            long remaining = SESSIONS.values().stream().filter(session -> session.npcId.equals(ended.npcId))
-                .mapToLong(session -> session.expires).max().orElse(0);
-            if (remaining > level.getGameTime()) CombatService.data(npc).runtime.editorUntil = remaining;
-            else CombatService.endEditing(new CombatContext(npc));
-            break;
-        }
+        var level = player.getServer().getLevel(ended.dimension);
+        if (level == null) return;
+        var entity = level.getEntity(ended.npcId);
+        if (!(entity instanceof EntityNPCInterface npc) || !CombatService.presentNpc(npc)) return;
+        long remaining = SESSIONS.values().stream().filter(session -> session.npcId.equals(ended.npcId) && session.dimension.equals(ended.dimension))
+            .mapToLong(session -> session.expires).max().orElse(0);
+        if (remaining > level.getGameTime()) CombatService.data(npc).runtime.editorUntil = remaining;
+        else CombatService.endEditing(new CombatContext(npc));
     }
     private static void handle(Request request, Supplier<NetworkEvent.Context> supplier) {
         NetworkEvent.Context context = supplier.get(); ServerPlayer player = context.getSender();
         if (player != null) context.enqueueWork(() -> accept(player, request));
         context.setPacketHandled(true);
     }
-    private static EntityNPCInterface editing(ServerPlayer player, UUID id, Operation operation) {
-        EntityNPCInterface npc = NoppesUtilServer.getEditingNpc(player);
-        if (npc == null || !id.equals(npc.getUUID()) || !CombatService.validNpc(npc) || !player.isAlive()
-                || npc.level() != player.level() || player.distanceToSqr(npc) > 256
+    private static EntityNPCInterface editing(ServerPlayer player, Request request, Session session) {
+        EntityNPCInterface npc;
+        if (request.operation == Operation.OPEN) npc = NoppesUtilServer.getEditingNpc(player);
+        else {
+            if (session == null || !session.npcId.equals(request.npcId) || !session.token.equals(request.token)
+                    || !session.dimension.equals(player.level().dimension()) || session.expires < player.level().getGameTime()) return null;
+            // CNPC's temporary editing reference may be cleared or replaced while our authorized page remains open.
+            var entity = player.serverLevel().getEntity(session.npcId);
+            npc = entity instanceof EntityNPCInterface found ? found : null;
+        }
+        if (!CombatService.presentNpc(npc) || !request.npcId.equals(npc.getUUID()) || !player.isAlive()
+                || npc.level() != player.level()
                 || !(player.getMainHandItem().is(CustomItems.wand) || player.getOffhandItem().is(CustomItems.wand))
                 || !CustomNpcsPermissions.hasPermission(player, CustomNpcsPermissions.NPC_GUI)
                 || !CustomNpcsPermissions.hasPermission(player, CustomNpcsPermissions.NPC_ADVANCED)) return null;
         if (Set.of(Operation.EXCHANGE, Operation.UNEQUIP, Operation.SUPPLY, Operation.SWITCH, Operation.PRIMARY_WEAPON, Operation.EQUIP_CREATIVE,
-                Operation.SAVE_ITEM_PRESET, Operation.EQUIP_ITEM_PRESET, Operation.DELETE_ITEM_PRESET).contains(operation)
+                Operation.SAVE_ITEM_PRESET, Operation.EQUIP_ITEM_PRESET, Operation.DELETE_ITEM_PRESET).contains(request.operation)
                 && !CustomNpcsPermissions.hasPermission(player, CustomNpcsPermissions.NPC_INVENTORY)) return null;
         return npc;
     }
@@ -140,14 +150,13 @@ public final class GunNetwork {
     private static void accept(ServerPlayer player, Request request) {
         long now = player.level().getGameTime();
         if (request.requestId <= 0 || request.operation != Operation.CLOSE && !rate(player, now)) return;
-        EntityNPCInterface npc = editing(player, request.npcId, request.operation);
-        if (npc == null) { denied(player, request, "PERMISSION_DENIED"); return; }
         Session session = SESSIONS.get(player.getUUID());
+        EntityNPCInterface npc = editing(player, request, session);
+        if (npc == null) { denied(player, request, "PERMISSION_DENIED"); return; }
         if (request.operation == Operation.OPEN) {
             Session previous = SESSIONS.remove(player.getUUID()); finishEditing(player, previous);
-            session = new Session(npc.getUUID(), now); SESSIONS.put(player.getUUID(), session);
-        } else if (session == null || !session.npcId.equals(request.npcId) || !session.token.equals(request.token)
-                || session.expires < now) { denied(player, request, "PERMISSION_DENIED"); return; }
+            session = new Session(npc.getUUID(), npc.level().dimension(), now); SESSIONS.put(player.getUUID(), session);
+        }
         if (request.requestId <= session.lastRequest) { denied(player, request, "CONFLICT"); return; }
         if (request.operation == Operation.CLOSE) {
             SESSIONS.remove(player.getUUID()); finishEditing(player, session); return;
@@ -202,8 +211,8 @@ public final class GunNetwork {
                     Session active = SESSIONS.get(playerId);
                     if (current == null || active == null || !active.token.equals(token) || active.pending != request.requestId) return;
                     active.pending = 0;
-                    EntityNPCInterface npc = editing(current, request.npcId, request.operation);
-                    if (npc == null || active.expires < current.level().getGameTime()) { denied(current, request, "PERMISSION_DENIED"); return; }
+                    EntityNPCInterface npc = editing(current, request, active);
+                    if (npc == null) { denied(current, request, "PERMISSION_DENIED"); return; }
                     CombatContext ctx = new CombatContext(npc); CombatService.refresh(ctx);
                     if (ctx.config.revision != request.revision) { respond(current, active, request.requestId, ctx, Result.fail("CONFLICT")); return; }
                     Result result = error;

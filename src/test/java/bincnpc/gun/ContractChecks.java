@@ -20,12 +20,14 @@ import bincnpc.gun.gun.controller.FireTiming;
 import bincnpc.gun.compat.superb.BocekDrawState;
 import com.google.gson.*;
 import java.util.*;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.tree.*;
 
 /** Pure contract checks; this task never initializes a Minecraft server or client. */
 public final class ContractChecks {
     private static int checks;
     public static void main(String[] args) throws Exception {
-        json(); schema(); graphs(); scheduling(); combatDecisions(); targetSearch(); ballistics(); throwingPolicy(); reloadTiming(); ammunitionPolicy(); recoil(); firing(); bowDraw(); presets(); api();
+        json(); schema(); graphs(); scheduling(); combatDecisions(); targetSearch(); ballistics(); throwingPolicy(); reloadTiming(); ammunitionPolicy(); recoil(); firing(); bowDraw(); presets(); editing(); api();
         EditorChecks.run();
         System.out.println("CNPCGUN_CONTRACT_CHECKS=" + checks + " PASSED");
     }
@@ -476,6 +478,56 @@ public final class ContractChecks {
         check(!maid.getAsJsonObject("actions").getAsJsonObject("slashblade:tests/sa/one").get("linkPhantom").getAsBoolean(), "maid phantoms use an independent lane");
         check(Presets.template("CUSTOM").getAsJsonObject("actions").getAsJsonObject("slashblade:tests/sa/one").get("enabled").getAsBoolean() == false, "custom preset avoids automatic action assumptions");
         ActionRegistry.INSTANCE.clear();
+    }
+    private static MethodNode bytecode(String owner, String name) throws Exception {
+        try (var stream = ContractChecks.class.getResourceAsStream("/" + owner.replace('.', '/') + ".class")) {
+            ClassNode type = new ClassNode(); new ClassReader(stream).accept(type, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            return type.methods.stream().filter(method -> method.name.equals(name)).findFirst().orElseThrow();
+        }
+    }
+    private static List<String> calls(MethodNode method) {
+        List<String> result = new ArrayList<>();
+        for (var instruction : method.instructions) if (instruction instanceof MethodInsnNode call) result.add(call.owner + "." + call.name);
+        return result;
+    }
+    /** Inspect the compiled authorization boundary without bootstrapping registries, worlds or a network channel. */
+    private static void editing() throws Exception {
+        String combat = "bincnpc.gun.common.combat.CombatService", network = "bincnpc.gun.common.network.GunNetwork";
+        var present = calls(bytecode(combat, "presentNpc"));
+        check(present.stream().anyMatch(call -> call.endsWith(".isRemoved")) && present.stream().anyMatch(call -> call.endsWith(".getEntity")),
+            "editable NPC must be undeleted and present in the loaded server entity table");
+        check(present.stream().noneMatch(call -> call.endsWith(".isAlive") || call.endsWith(".isKilled")),
+            "death and pending native respawn do not revoke configuration editing");
+        var alive = calls(bytecode(combat, "validNpc"));
+        check(alive.contains("bincnpc/gun/common/combat/CombatService.presentNpc") && alive.stream().anyMatch(call -> call.endsWith(".isAlive"))
+            && alive.stream().anyMatch(call -> call.endsWith(".isKilled")), "combat still requires a live NPC");
+        MethodNode boundary = bytecode(network, "editing"); var access = calls(boundary);
+        check(access.contains("bincnpc/gun/common/combat/CombatService.presentNpc") && !access.contains("bincnpc/gun/common/combat/CombatService.validNpc"),
+            "shared save and heartbeat boundary uses entity presence, not combat liveness");
+        check(access.stream().anyMatch(call -> call.endsWith(".getEditingNpc")) && access.stream().anyMatch(call -> call.endsWith(".getEntity"))
+            && access.stream().noneMatch(call -> call.endsWith(".setEditingNpc") || call.endsWith(".reset") || call.endsWith(".getChunk")),
+            "open verifies the native target; active sessions resolve loaded entities without rebinding or reviving them");
+        Set<String> fields = new HashSet<>();
+        for (var instruction : boundary.instructions) if (instruction instanceof FieldInsnNode field) fields.add(field.owner + "." + field.name);
+        for (String field : List.of("npcId", "token", "dimension", "expires"))
+            check(fields.contains("bincnpc/gun/common/network/GunNetwork$Session." + field), "session authorization retains " + field);
+        for (String permission : List.of("NPC_GUI", "NPC_ADVANCED", "NPC_INVENTORY"))
+            check(fields.contains("noppes/npcs/CustomNpcsPermissions." + permission), "live native permission check retained: " + permission);
+        check(fields.contains("noppes/npcs/CustomItems.wand") && access.stream().anyMatch(call -> call.endsWith(".getMainHandItem"))
+            && access.stream().anyMatch(call -> call.endsWith(".getOffhandItem")), "both hands retain exact native wand checks");
+        check(access.stream().noneMatch(call -> call.endsWith(".distanceToSqr")), "native remote editing and respawn relocation have no extra 16-block rejection");
+        check(calls(bytecode(network, "accept")).contains("bincnpc/gun/common/network/GunNetwork.editing"), "synchronous saves and heartbeats use the shared boundary");
+        try (var stream = ContractChecks.class.getResourceAsStream("/bincnpc/gun/common/network/GunNetwork.class")) {
+            ClassNode type = new ClassNode(); new ClassReader(stream).accept(type, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            check(type.methods.stream().filter(method -> method.name.startsWith("lambda$validateAsync$"))
+                .anyMatch(method -> calls(method).contains("bincnpc/gun/common/network/GunNetwork.editing")), "async commit rechecks the same server authorization boundary");
+        }
+        check(calls(bytecode(network, "finishEditing")).contains("bincnpc/gun/common/combat/CombatService.presentNpc"), "closing a dead NPC clears its editor pause");
+        MethodNode reset = bytecode("bincnpc.gun.mixin.NpcDataMixin", "cnpcgun$reset");
+        boolean clearsPause = false;
+        for (var instruction : reset.instructions) if (instruction instanceof FieldInsnNode field && field.getOpcode() == org.objectweb.asm.Opcodes.PUTFIELD
+            && Set.of("editorUntil", "editorPaused").contains(field.name)) clearsPause = true;
+        check(!clearsPause, "native reset preserves a still-open authorized editor's pause");
     }
     private static void api() throws Exception {
         check(Result.success().ok && Result.success().code.equals("SUCCESS"), "success contract");

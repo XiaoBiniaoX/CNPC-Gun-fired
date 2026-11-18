@@ -35,8 +35,6 @@ public abstract class NpcDataMixin implements NpcAccess {
         if (bincnpc.gun.common.combat.CombatService.serverThread(npc)) {
             cnpcgun$data().throwing.reset(); cnpcgun$data().throwItems.reset();
             cnpcgun$data().runtime.restoreSupplies = true;
-            cnpcgun$data().runtime.editorUntil = 0;
-            cnpcgun$data().runtime.editorPaused = false;
         }
     }
     @Inject(method = {"m_8107_", "aiStep"}, at = @At("TAIL"), require = 0)
