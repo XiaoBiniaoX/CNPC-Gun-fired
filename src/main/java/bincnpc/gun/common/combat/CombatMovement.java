@@ -28,7 +28,7 @@ public final class CombatMovement {
         if (Loader.isModLoaded("npcpathfindinglegacy")) bincnpc.gun.compat.pathfinding.PathfindingBridge.prepare(ctx, false);
     }
     public static double meleeReach(CombatContext ctx) {
-        return MathHelper.clamp(Math.max(ctx.config.number("weapon.meleeDistance"), ctx.npc.stats.melee.getRange()), 0.5, Math.min(32, ctx.config.number("combat.attackRange")));
+        return MathHelper.clamp(Math.max(ctx.config.number("weapon.meleeDistance"), ctx.npc.stats.melee.getRange()), 0.5, 32);
     }
     public static void chase(CombatContext ctx) {
         if (!ctx.data.throwing.movementLocked() && ctx.validTarget()) ctx.npc.getNavigator().tryMoveToEntityLiving(ctx.target, 1.15);
@@ -43,8 +43,8 @@ public final class CombatMovement {
             } else ctx.npc.getNavigator().clearPath();
             return;
         }
-        double preferred = gun ? Math.max(8, Math.min(18, ctx.config.number("gun.range") * 0.6)) : Math.max(1.5, meleeReach(ctx) * 0.65);
-        if (move.pursueSlot >= 0 || ctx.distance > (gun ? Math.min(ctx.config.number("gun.range"), ctx.config.number("combat.attackRange")) : meleeReach(ctx))) {
+        double preferred = gun ? Math.max(8, Math.min(18, ctx.gunRange() * 0.6)) : Math.max(1.5, meleeReach(ctx) * 0.65);
+        if (move.pursueSlot >= 0 || ctx.distance > (gun ? ctx.gunRange() : meleeReach(ctx))) {
             if (ctx.now >= move.nextMove) { chase(ctx); move.nextMove = ctx.now + 6; }
             return;
         }

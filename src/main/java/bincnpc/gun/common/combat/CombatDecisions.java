@@ -119,6 +119,25 @@ public long generation() { return generation; }
         public boolean currentGeneration() { return generation < 0 || generation == CombatDecisions.generation; }
     
 }
+    public static final class SearchResult {
+        private final TargetSearch.Snapshot snapshot;
+        private final List<UUID> targets;
+        private final long generation;
+        public SearchResult(TargetSearch.Snapshot snapshot, List<UUID> targets, long generation) {
+            this.snapshot = snapshot; this.targets = targets; this.generation = generation;
+        }
+        public TargetSearch.Snapshot snapshot() { return snapshot; }
+        public List<UUID> targets() { return targets; }
+        public boolean currentGeneration() { return generation == CombatDecisions.generation; }
+    }
+    public static FutureTask<SearchResult> submitSearch(TargetSearch.Snapshot snapshot) {
+        synchronized (LIFECYCLE) {
+            if (executor == null || executor.isShutdown()) return null;
+            long epoch = generation;
+            FutureTask<SearchResult> task = new FutureTask<>(() -> new SearchResult(snapshot, TargetSearch.rank(snapshot), epoch));
+            try { executor.execute(task); return task; } catch (RejectedExecutionException full) { return null; }
+        }
+    }
     private static final Object LIFECYCLE = new Object();
     private static volatile ThreadPoolExecutor executor;
     private static volatile long generation;
@@ -204,10 +223,11 @@ public long generation() { return generation; }
     }
     public static void stop() {
         synchronized (LIFECYCLE) {
-Object cnpcgun$value0; Ticket cnpcgun$match0;
-
             generation++; ThreadPoolExecutor previous = executor; executor = null;
-            if (previous != null) for (Runnable pending : previous.shutdownNow()) if (((cnpcgun$value0 = pending) instanceof Ticket && (cnpcgun$match0 = (Ticket)cnpcgun$value0) != null)) cnpcgun$match0.cancel();
+            if (previous != null) for (Runnable pending : previous.shutdownNow()) {
+                if (pending instanceof Ticket) ((Ticket)pending).cancel();
+                else if (pending instanceof FutureTask<?>) ((FutureTask<?>)pending).cancel(false);
+            }
         }
     }
 }

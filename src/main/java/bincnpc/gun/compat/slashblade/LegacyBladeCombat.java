@@ -50,7 +50,7 @@ public final class LegacyBladeCombat {
         if (!active(npc) || target == null || target.world != npc.world || target == npc) return false;
         EntityLivingBase living = living(target);
         if (living != null) {
-            double range = CombatService.data(npc).config.number("combat.attackRange");
+            double range = Math.max(npc.stats.aggroRange, npc.stats.ranged.getRange());
             return CombatService.hostile(npc, living) && npc.getDistanceSq(living) <= range * range;
         }
         Entity otherOwner = target instanceof IThrowableEntity ? ((IThrowableEntity) target).getThrower() : null;
@@ -132,10 +132,10 @@ public final class LegacyBladeCombat {
     }
 
     static int phantomCount(CombatContext ctx) {
-        return ctx.npc.world.getEntitiesInAABBexcluding(ctx.npc, ctx.npc.getEntityBoundingBox().grow(Math.max(40, ctx.config.number("combat.attackRange") + 8)), entity ->
+        return (int)ctx.npc.world.loadedEntityList.stream().filter(entity ->
             !entity.isDead && entity instanceof IThrowableEntity && ((IThrowableEntity) entity).getThrower() == ctx.npc
                 && (entity instanceof mods.flammpfeil.slashblade.entity.EntitySummonedSwordBase
                     || entity.getClass().getName().startsWith("cn.mmf.slashblade_addon.entity.EntityPhantom")
-                    || entity.getClass().getName().endsWith("EntityLightningSword"))).size();
+                    || entity.getClass().getName().endsWith("EntityLightningSword"))).count();
     }
 }

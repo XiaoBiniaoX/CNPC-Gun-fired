@@ -24,7 +24,7 @@ public final class Armory {
     }
 
     public Result switchTo(CombatContext ctx, int index) {
-        if (ctx == null || !CombatService.serverThread(ctx.npc) || !CombatService.validNpc(ctx.npc)) return Result.fail("INVALID_NPC");
+        if (ctx == null || !CombatService.serverThread(ctx.npc) || !CombatService.presentNpc(ctx.npc)) return Result.fail("INVALID_NPC");
         if (index < 0 || index >= SIZE) return Result.fail("INVALID_ARGUMENT");
         if (index == active) return Result.success();
         if (ctx.runtime.scheduler.busy(ctx.now) || ctx.data.throwing.blocksAttack(ctx.now)) return Result.fail("BUSY");

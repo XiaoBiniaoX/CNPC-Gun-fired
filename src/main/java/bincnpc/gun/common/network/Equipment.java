@@ -16,7 +16,7 @@ public final class Equipment {
     public static ItemStack[] empty() { ItemStack[] items = new ItemStack[SIZE]; java.util.Arrays.fill(items, ItemStack.EMPTY); return items; }
     public static ItemStack get(CombatContext ctx, int slot) { return ctx == null || slot < 0 || slot >= SIZE ? ItemStack.EMPTY : slot < Armory.SIZE ? ctx.data.armory.get(ctx.npc, slot) : ctx.data.throwItems.get(slot - Armory.SIZE); }
     private static boolean valid(CombatContext ctx, EntityPlayerMP player, int slot) {
-        return ctx != null && player != null && CombatService.serverThread(ctx.npc) && CombatService.validNpc(ctx.npc) && player.world == ctx.npc.world && slot >= Armory.SIZE && slot < SIZE && !ctx.runtime.scheduler.busy(ctx.now) && !ctx.data.throwing.blocksAttack(ctx.now);
+        return ctx != null && player != null && CombatService.serverThread(ctx.npc) && CombatService.presentNpc(ctx.npc) && player.world == ctx.npc.world && slot >= Armory.SIZE && slot < SIZE && !ctx.runtime.scheduler.busy(ctx.now) && !ctx.data.throwing.blocksAttack(ctx.now);
     }
     private static boolean supported(ItemStack item) { return item != null && (item.isEmpty() || !bincnpc.gun.common.legacy.Platform.is(item, noppes.npcs.CustomItems.wand) && item.getCount() <= Math.min(64, item.getMaxStackSize()) && ThrowAdapters.find(item) != null); }
     public static Result exchange(CombatContext ctx, EntityPlayerMP player, int slot, int inventorySlot) {

@@ -7,10 +7,14 @@
   "mixins": [
     "ProjectileHitAccess",
     "ProjectileFactoryAccess",
-    "CreativeTabAccess"
+    "CreativeTabAccess",
+    "NpcLongRangeSightMixin"
   ],
   "client": [
-    "client.BipedAnimationMixin"
+    "client.BipedAnimationMixin",
+    "client.GuiScreenAccess",
+    "client.EmbeddedGuiScreenMixin",
+    "client.EmbeddedGuiSlotMixin"
   ],
   "injectors": {
     "defaultRequire": 1

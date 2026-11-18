@@ -101,7 +101,7 @@ public abstract class NativeMagazineAdapter implements GunAdapter {
                 && ctx.target.getUniqueID().equals(s.target) && !ctx.runtime.editorPaused
                 && ctx.config.bool("combat.enabled") && ctx.config.bool("gun.enabled")
                 && !ctx.data.throwing.blocksAttack(ctx.now)
-                && ctx.distance <= Math.min(ctx.config.number("gun.range"), ctx.config.number("combat.attackRange"));
+                && ctx.distance <= ctx.gunRange();
             if (!allowed) stopFire(ctx);
             else if (ctx.now >= s.chargeEnd) {
                 s.charging = ItemStack.EMPTY; s.target = null; ctx.npc.resetActiveHand();

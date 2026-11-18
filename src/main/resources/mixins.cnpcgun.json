@@ -7,6 +7,9 @@
   "plugin": "bincnpc.gun.CompatMixinPlugin",
   "mixins": [
     "NpcDataMixin",
+    "NpcTargetSearchMixin",
+    "NpcRangedRangeMixin",
+    "NpcAggroRangeMixin",
     "MeleeAiMixin",
     "RangedAiMixin",
     "ScriptGlobalsMixin",
@@ -38,6 +41,8 @@
   ],
   "client": [
     "GuiNpcMenuMixin",
+    "NpcRangeGuiMixin",
+    "NpcAggroGuiMixin",
     "client.NpcModelAnimationMixin"
   ],
   "injectors": {

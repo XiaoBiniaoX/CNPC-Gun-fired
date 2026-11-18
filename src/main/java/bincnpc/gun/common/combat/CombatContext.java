@@ -32,18 +32,21 @@ public final class CombatContext {
     }
     public CombatContext withWeapon(ItemStack stack) { return new CombatContext(npc, target, stack); }
     public boolean validTarget() { return CombatService.validTarget(npc, target); }
+    public int gunRange() { return npc.stats.ranged.getRange(); }
     public List<EntityLivingBase> targets() {
         if (now >= runtime.nextTargetScan) {
             runtime.nearbyTargets.clear();
-            double range = Math.min(config.number("combat.attackRange"), 32);
-            for (EntityLivingBase e : npc.world.getEntitiesWithinAABB(EntityLivingBase.class, npc.getEntityBoundingBox().grow(range),
-                    e -> CombatService.hostile(npc, e))) {
+            double range = Math.max(npc.stats.aggroRange, gunRange());
+            // Only loaded entities; never walk a 2048-block box through empty chunk sections.
+            for (net.minecraft.entity.Entity entity : npc.world.loadedEntityList) {
                 if (runtime.nearbyTargets.size() >= 16) break;
-                runtime.nearbyTargets.add(e);
+                if (entity instanceof EntityLivingBase && npc.getDistanceSq(entity) <= range * range
+                        && CombatService.hostile(npc, (EntityLivingBase)entity)) runtime.nearbyTargets.add((EntityLivingBase)entity);
             }
             runtime.nextTargetScan = now + config.integer("combat.decisionInterval");
         }
-        return runtime.nearbyTargets.stream().filter(e -> CombatService.validTarget(npc, e)).collect(bincnpc.gun.common.legacy.Legacy.toList());
+        double range = Math.max(npc.stats.aggroRange, gunRange());
+        return runtime.nearbyTargets.stream().filter(e -> npc.getDistanceSq(e) <= range * range && CombatService.hostile(npc, e)).collect(bincnpc.gun.common.legacy.Legacy.toList());
     }
     public float yaw() {
         if (target == null) return npc.rotationYaw;

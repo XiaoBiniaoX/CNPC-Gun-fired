@@ -81,7 +81,7 @@ Object cnpcgun$value2; BladeAdapter cnpcgun$match2;
             options = ActionConfig.validate(action, def);
         } catch (IllegalArgumentException | IllegalStateException e) { return Result.fail("INVALID_ARGUMENT", e.getMessage()); }
         if (ctx.validTarget() && (ctx.distance < options.get("minDistance").getAsDouble()
-                || ctx.distance > Math.min(options.get("maxDistance").getAsDouble(), ctx.config.number("combat.attackRange"))))
+                || ctx.distance > options.get("maxDistance").getAsDouble()))
             return Result.fail("OUT_OF_RANGE");
         if (!Conditions.all(options.getAsJsonArray("conditions"), ctx)) return Result.fail("CONDITION_NOT_MET");
         if (ctx.validTarget()) {
@@ -168,13 +168,12 @@ Object cnpcgun$value2; BladeAdapter cnpcgun$match2;
         }
         if (!ctx.runtime.command.equals("AUTO") || ctx.data.throwing.blocksAttack(ctx.now)) return;
         if (ctx.runtime.adapter instanceof BladeAdapter && ctx.config.bool("slashblade.enabled") && ctx.config.bool("slashblade.autoAttack")
-                && ctx.config.text("slashblade.preset").equals("MAID") && ctx.validTarget() && ctx.distance <= ctx.config.number("combat.attackRange"))
+                && ctx.config.text("slashblade.preset").equals("MAID") && ctx.validTarget())
             maid.mirage(ctx);
         if (graph != null) { tickGraph(ctx); return; }
         if (!(ctx.runtime.adapter instanceof BladeAdapter) || !ctx.config.bool("slashblade.enabled")
                 || !ctx.config.bool("slashblade.autoAttack") || !ctx.validTarget()) return;
         if (ctx.now < nextDecision) return;
-        if (ctx.distance > ctx.config.number("combat.attackRange")) return;
         String preset = ctx.config.text("slashblade.preset");
         if (preset.equals("CUSTOM")) {
             String selected = ctx.config.selectedGraph();
@@ -255,7 +254,7 @@ strategy = beginner; break;
             }
             return options.get("enabled").getAsBoolean() && options.get("auto").getAsBoolean()
                 && (!ctx.validTarget() || ctx.distance >= options.get("minDistance").getAsDouble()
-                    && ctx.distance <= Math.min(ctx.config.number("combat.attackRange"), options.get("maxDistance").getAsDouble()))
+                    && ctx.distance <= options.get("maxDistance").getAsDouble())
                 && Conditions.all(options.getAsJsonArray("conditions"), ctx);
         } catch (IllegalArgumentException | IllegalStateException e) { return false; }
     }

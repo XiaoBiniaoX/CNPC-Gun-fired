@@ -86,7 +86,7 @@ Object cnpcgun$value1; IEntity<?> cnpcgun$match1;
         public Object getConfig(String key) {
             CombatContext ctx = context();
             if (ctx == null) return unavailable();
-            return ConfigSchema.get(key) == null ? Result.fail("NOT_FOUND") : SafeJson.plain(ctx.config.get(key));
+            return ConfigSchema.get(key) == null ? Result.fail("NOT_FOUND") : SafeJson.plain(CombatService.getConfig(ctx, key));
         }
         public Result setConfig(String key, Object value) {
 Object cnpcgun$value2; String cnpcgun$match2;
@@ -331,8 +331,8 @@ Object cnpcgun$value13; EntityLivingBase cnpcgun$match13;
             ctx.npc.setAttackTarget(cnpcgun$match13); return Result.success();
         }
         public Result clearTarget() { CombatContext ctx = parent.context(); if (ctx == null) return parent.unavailable(); ctx.npc.setAttackTarget(null); return Result.success(); }
-        public Double getAttackRange() { CombatContext ctx = parent.context(); return ctx == null ? null : ctx.config.number("combat.attackRange"); }
-        public Result setAttackRange(double range) { return parent.setConfig("combat.attackRange", range); }
+        public Double getAttackRange() { CombatContext ctx = parent.context(); return ctx == null ? null : (double)ctx.gunRange(); }
+        public Result setAttackRange(double range) { return parent.setConfig("gun.range", range); }
         public boolean isInCombat() { CombatContext ctx = parent.context(); return ctx != null && ctx.validTarget(); }
         public String getCombatState() { CombatContext ctx = parent.context(); return ctx == null ? "DISABLED" : ctx.runtime.combatState; }
         public Result setCombatEnabled(boolean enabled) { return parent.setConfig("combat.enabled", enabled); }

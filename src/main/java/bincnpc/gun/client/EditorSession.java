@@ -46,6 +46,7 @@ public final class EditorSession {
             if (packet.slots() != null) for (int i = 0; i < Math.min(slots.length, packet.slots().length); i++)
                 if (packet.slots()[i] != null) slots[i] = packet.slots()[i].copy();
         }
+        if ("SESSION_EXPIRED".equals(packet.code())) token = GunNetwork.NO_TOKEN;
         status = "SUCCESS".equals(packet.code()) ? "cnpcgun.gui.saved" : "cnpcgun.error." + (packet.code() == null ? "internal_error" : packet.code().toLowerCase(Locale.ROOT));
         Consumer<GunNetwork.Response> completed = callback; callback = null;
         if (completed != null) completed.accept(packet);

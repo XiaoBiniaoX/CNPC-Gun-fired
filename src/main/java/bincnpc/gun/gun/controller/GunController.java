@@ -73,7 +73,7 @@ Object cnpcgun$value1; GunAdapter cnpcgun$match1;
             return;
         }
         if (!ctx.runtime.command.equals("AUTO") || !ctx.config.bool("gun.autoAttack") || ctx.runtime.fireStopped) return;
-        double range = Math.min(ctx.config.number("gun.range"), ctx.config.number("combat.attackRange"));
+        double range = ctx.gunRange();
         if (ctx.distance > range) {
             if (ctx.now >= ctx.runtime.nextDecision) ctx.npc.getNavigator().tryMoveToEntityLiving(ctx.target, 1);
             CombatService.setState(ctx, "APPROACHING"); return;
@@ -113,7 +113,7 @@ Object cnpcgun$value2; GunAdapter cnpcgun$match2;
         if (!ctx.config.bool("combat.enabled") || !ctx.config.bool("gun.enabled")) return Result.fail("PERMISSION_DENIED");
         if (ctx.runtime.gunCaps == null || !ctx.runtime.gunCaps.canFire) return Result.fail("UNSUPPORTED");
         if (!ctx.validTarget()) return Result.fail("INVALID_TARGET");
-        if (ctx.distance > Math.min(ctx.config.number("gun.range"), ctx.config.number("combat.attackRange"))
+        if (ctx.distance > ctx.gunRange()
                 || ctx.distance < ctx.config.number("gun.minRange")) return Result.fail("OUT_OF_RANGE");
         if (!ctx.npc.getEntitySenses().canSee(ctx.target) && ctx.config.text("gun.prefire").equals("NONE"))
             return Result.fail("CONDITION_NOT_MET");

@@ -100,12 +100,21 @@ public final class CollisionSnapshot {
         return danger!=null&&danger.stream().noneMatch(box->box.contains(goal));
     }
     public static boolean clear(WorldServer level,Entity entity,Vec3d start,Vec3d end){
-        requireThread(level);if(start.squareDistanceTo(end)>128*128)return false;
-        try{for(Ballistics.Cell cell:Ballistics.cells(vector(start),vector(end),0,1024))
-            if(!loadedShape(level,new BlockPos(cell.x(),cell.y(),cell.z())))return false;}
-        catch(IllegalArgumentException tooLarge){return false;}
-        RayTraceResult hit=level.rayTraceBlocks(start,end,false,true,false);
-        return hit==null||hit.typeOfHit==RayTraceResult.Type.MISS;
+        requireThread(level);
+        if(!Double.isFinite(start.x)||!Double.isFinite(start.y)||!Double.isFinite(start.z)
+            ||!Double.isFinite(end.x)||!Double.isFinite(end.y)||!Double.isFinite(end.z)||start.squareDistanceTo(end)>4096.0*4096.0)return false;
+        // Vanilla 1.12 rays stop after 200 cells. Short segments preserve real collision without skipping distant walls.
+        int steps=Math.max(1,(int)Math.ceil(start.distanceTo(end)/64));
+        Vec3d delta=end.subtract(start),from=start;
+        for(int i=1;i<=steps;i++){
+            Vec3d to=start.add(delta.scale(i/(double)steps));
+            for(Ballistics.Cell cell:Ballistics.cells(vector(from),vector(to),0,1024))
+                if(!loadedShape(level,new BlockPos(cell.x(),cell.y(),cell.z())))return false;
+            RayTraceResult hit=level.rayTraceBlocks(from,to,false,true,false);
+            if(hit!=null&&hit.typeOfHit!=RayTraceResult.Type.MISS)return false;
+            from=to;
+        }
+        return true;
     }
     public static boolean stepClear(WorldServer level,Entity projectile,Vec3d from,Vec3d to){
         if(!clear(level,projectile,from,to))return false;

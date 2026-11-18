@@ -138,9 +138,10 @@ public boolean aiming() { return aiming; }
 }
     private static final class Session {
         final UUID npcId, token = UUID.randomUUID();
+        final int dimension;
         int lastRequest, pending;
         long expires;
-        Session(UUID npcId, long now) { this.npcId = npcId; expires = now + 1200; }
+        Session(EntityNPCInterface npc, long now) { npcId = npc.getUniqueID(); dimension = npc.dimension; expires = now + 1200; }
     }
     private static final class Rate { long window; int count; }
     private static final Map<UUID, Session> SESSIONS = new HashMap<>();
@@ -179,28 +180,39 @@ public boolean aiming() { return aiming; }
     private static void finishEditing(EntityPlayerMP player, Session ended) {
         if (ended == null || player.getServer() == null) return;
         for (WorldServer level : player.getServer().worlds) {
-Object cnpcgun$value0; EntityNPCInterface cnpcgun$match0;
-
+            if (level.provider.getDimension() != ended.dimension) continue;
             Entity entity = level.getEntityFromUuid(ended.npcId);
-            if (!(((cnpcgun$value0 = entity) instanceof EntityNPCInterface && (cnpcgun$match0 = (EntityNPCInterface)cnpcgun$value0) != null)) || !CombatService.validNpc(cnpcgun$match0)) continue;
-            long remaining = SESSIONS.values().stream().filter(session -> session.npcId.equals(ended.npcId))
+            if (!(entity instanceof EntityNPCInterface)) continue;
+            EntityNPCInterface npc = (EntityNPCInterface)entity;
+            if (!CombatService.presentNpc(npc)) continue;
+            long remaining = SESSIONS.values().stream().filter(session -> session.dimension == ended.dimension && session.npcId.equals(ended.npcId))
                 .mapToLong(session -> session.expires).max().orElse(0);
-            if (remaining > level.getTotalWorldTime()) CombatService.data(cnpcgun$match0).runtime.editorUntil = remaining;
-            else CombatService.endEditing(new CombatContext(cnpcgun$match0));
+            if (remaining > level.getTotalWorldTime()) CombatService.data(npc).runtime.editorUntil = remaining;
+            else CombatService.endEditing(new CombatContext(npc));
             break;
         }
     }
     private static EntityNPCInterface editing(EntityPlayerMP player, UUID id, Operation operation) {
-        EntityNPCInterface npc = NoppesUtilServer.getEditingNpc(player);
-        if (npc == null || !id.equals(npc.getUniqueID()) || !CombatService.validNpc(npc) || !player.isEntityAlive()
-                || npc.world != player.world || player.getDistanceSq(npc) > 256
-                || !(bincnpc.gun.common.legacy.Platform.is(player.getHeldItemMainhand(), CustomItems.wand) || bincnpc.gun.common.legacy.Platform.is(player.getHeldItemOffhand(), CustomItems.wand))
-                || !CustomNpcsPermissions.hasPermission(player, CustomNpcsPermissions.NPC_GUI)
-                || !CustomNpcsPermissions.hasPermission(player, CustomNpcsPermissions.NPC_ADVANCED)) return null;
+        // Native editingNpc only authorizes OPEN. An issued token binds later edits to the world UUID.
+        if (operation == Operation.OPEN) {
+            EntityNPCInterface selected = NoppesUtilServer.getEditingNpc(player);
+            if (selected == null || !id.equals(selected.getUniqueID()) || selected.world != player.world) return null;
+        }
+        Entity entity = player.getServerWorld().getEntityFromUuid(id);
+        return entity instanceof EntityNPCInterface ? (EntityNPCInterface)entity : null;
+    }
+    private static String editingError(EntityPlayerMP player, EntityNPCInterface npc, Operation operation) {
+        if (!CombatService.presentNpc(npc)) return "INVALID_NPC";
+        if (!player.isEntityAlive()) return "PERMISSION_DENIED";
+        if (npc.world != player.world || player.getDistanceSq(npc) > 256) return "OUT_OF_RANGE";
+        if (!(bincnpc.gun.common.legacy.Platform.is(player.getHeldItemMainhand(), CustomItems.wand)
+                || bincnpc.gun.common.legacy.Platform.is(player.getHeldItemOffhand(), CustomItems.wand))) return "WAND_REQUIRED";
+        if (!CustomNpcsPermissions.hasPermission(player, CustomNpcsPermissions.NPC_GUI)
+                || !CustomNpcsPermissions.hasPermission(player, CustomNpcsPermissions.NPC_ADVANCED)) return "PERMISSION_DENIED";
         if (bincnpc.gun.common.legacy.Legacy.set(Operation.EXCHANGE, Operation.UNEQUIP, Operation.SUPPLY, Operation.SWITCH, Operation.PRIMARY_WEAPON, Operation.EQUIP_CREATIVE,
                 Operation.SAVE_ITEM_PRESET, Operation.EQUIP_ITEM_PRESET, Operation.DELETE_ITEM_PRESET).contains(operation)
-                && !CustomNpcsPermissions.hasPermission(player, CustomNpcsPermissions.NPC_INVENTORY)) return null;
-        return npc;
+                && !CustomNpcsPermissions.hasPermission(player, CustomNpcsPermissions.NPC_INVENTORY)) return "PERMISSION_DENIED";
+        return null;
     }
     private static boolean rate(EntityPlayerMP player, long now) {
         Rate rate = RATES.computeIfAbsent(player.getUniqueID(), key -> new Rate());
@@ -210,17 +222,25 @@ Object cnpcgun$value0; EntityNPCInterface cnpcgun$match0;
     private static void accept(EntityPlayerMP player, Request request) {
         long now = player.world.getTotalWorldTime();
         if (request.requestId <= 0 || request.operation != Operation.CLOSE && !rate(player, now)) return;
-        EntityNPCInterface npc = editing(player, request.npcId, request.operation);
-        if (npc == null) { denied(player, request, "PERMISSION_DENIED"); return; }
         Session session = SESSIONS.get(player.getUniqueID());
+        if (request.operation != Operation.OPEN) {
+            if (session == null || !session.npcId.equals(request.npcId) || !session.token.equals(request.token)) {
+                denied(player, request, "SESSION_EXPIRED"); return;
+            }
+            if (request.requestId <= session.lastRequest) { denied(player, request, "CONFLICT"); return; }
+            // Closing writes no settings and must still release a session after its wand/target changes.
+            if (request.operation == Operation.CLOSE) {
+                SESSIONS.remove(player.getUniqueID()); finishEditing(player, session); return;
+            }
+            if (session.expires < now) { denied(player, request, "SESSION_EXPIRED"); return; }
+            if (session.dimension != player.dimension) { denied(player, request, "OUT_OF_RANGE"); return; }
+        }
+        EntityNPCInterface npc = editing(player, request.npcId, request.operation);
+        String error = editingError(player, npc, request.operation);
+        if (error != null) { denied(player, request, error); return; }
         if (request.operation == Operation.OPEN) {
             Session previous = SESSIONS.remove(player.getUniqueID()); finishEditing(player, previous);
-            session = new Session(npc.getUniqueID(), now); SESSIONS.put(player.getUniqueID(), session);
-        } else if (session == null || !session.npcId.equals(request.npcId) || !session.token.equals(request.token)
-                || session.expires < now) { denied(player, request, "PERMISSION_DENIED"); return; }
-        if (request.requestId <= session.lastRequest) { denied(player, request, "CONFLICT"); return; }
-        if (request.operation == Operation.CLOSE) {
-            SESSIONS.remove(player.getUniqueID()); finishEditing(player, session); return;
+            session = new Session(npc, now); SESSIONS.put(player.getUniqueID(), session);
         }
         if (session.pending != 0) { denied(player, request, "BUSY"); return; }
         session.lastRequest = request.requestId; session.expires = now + 1200;
@@ -272,8 +292,11 @@ Object cnpcgun$value0; EntityNPCInterface cnpcgun$match0;
                     Session active = SESSIONS.get(playerId);
                     if (current == null || active == null || !active.token.equals(token) || active.pending != request.requestId) return;
                     active.pending = 0;
+                    if (active.expires < current.world.getTotalWorldTime()) { denied(current, request, "SESSION_EXPIRED"); return; }
+                    if (active.dimension != current.dimension) { denied(current, request, "OUT_OF_RANGE"); return; }
                     EntityNPCInterface npc = editing(current, request.npcId, request.operation);
-                    if (npc == null || active.expires < current.world.getTotalWorldTime()) { denied(current, request, "PERMISSION_DENIED"); return; }
+                    String rejection = editingError(current, npc, request.operation);
+                    if (rejection != null) { denied(current, request, rejection); return; }
                     CombatContext ctx = new CombatContext(npc); CombatService.refresh(ctx);
                     if (ctx.config.revision != request.revision) { respond(current, active, request.requestId, ctx, Result.fail("CONFLICT")); return; }
                     Result result = error;

@@ -21,11 +21,13 @@ import noppes.npcs.entity.EntityNPCInterface;
 public final class CombatService {
     private CombatService() {}
     public static NpcData data(EntityNPCInterface npc) { return ((NpcAccess)npc).cnpcgun$data(); }
+    public static boolean presentNpc(EntityNPCInterface npc) {
+        // CNPC keeps respawnable corpses; vanilla isDead marks actual removal, not its IsDead flag.
+        return npc != null && data(npc).persistenceAvailable && !npc.isDead && npc.world instanceof WorldServer
+            && ((WorldServer)npc.world).getEntityFromUuid(npc.getUniqueID()) == npc;
+    }
     public static boolean validNpc(EntityNPCInterface npc) {
-Object cnpcgun$value0; WorldServer cnpcgun$match0;
-
-        return npc != null && data(npc).persistenceAvailable && npc.isEntityAlive() && !npc.isDead && !npc.isKilled()
-            && ((cnpcgun$value0 = npc.world) instanceof WorldServer && (cnpcgun$match0 = (WorldServer)cnpcgun$value0) != null) && cnpcgun$match0.getEntityFromUuid(npc.getUniqueID()) == npc;
+        return presentNpc(npc) && npc.isEntityAlive() && !npc.isKilled();
     }
     public static boolean serverThread(EntityNPCInterface npc) {
         return npc != null && npc.getServer() != null && npc.getServer().isCallingFromMinecraftThread() && !npc.world.isRemote;
@@ -59,7 +61,6 @@ Object cnpcgun$value1; net.minecraft.entity.player.EntityPlayer cnpcgun$match1;
         if (state.runtime.editorUntil > npc.world.getTotalWorldTime()) return;
         if (state.runtime.editorPaused) endEditing(new CombatContext(npc));
         else if (state.runtime.restoreSupplies) restoreDefaults(new CombatContext(npc));
-        acquirePrefireTarget(npc);
         if (!state.config.bool("combat.allowTargetChange") && state.runtime.targetId != null
                 && (npc.getAttackTarget() == null || !state.runtime.targetId.equals(npc.getAttackTarget().getUniqueID()))) {
 Object cnpcgun$value3; EntityLivingBase cnpcgun$match3;
@@ -202,6 +203,9 @@ Object cnpcgun$value4; GunAdapter cnpcgun$match4;
             ctx.runtime.bladeCaps == null ? null : SafeJson.GSON.fromJson(SafeJson.GSON.toJson(ctx.runtime.bladeCaps), Views.BladeCaps.class),
             !ctx.runtime.scheduler.busy(ctx.now));
     }
+    public static JsonElement getConfig(CombatContext ctx, String key) {
+        return "gun.range".equals(key) ? new JsonPrimitive(ctx.gunRange()) : ctx.config.get(key);
+    }
     public static Result setConfig(CombatContext ctx, String key, Object value) {
         Parameter parameter = ConfigSchema.get(key);
         if (parameter == null) return Result.fail("NOT_FOUND");
@@ -211,8 +215,9 @@ Object cnpcgun$value4; GunAdapter cnpcgun$match4;
             if (key.equals("slashblade.preset")) return bincnpc.gun.slashblade.strategy.Presets.apply(ctx, checked.getAsString());
             if (key.equals("gun.firingMode") && !EditorWeapons.firingMode(ctx, checked.getAsString())) return Result.fail("UNSUPPORTED");
             NpcConfig prospective = new NpcConfig(ctx.config.snapshot());
-            prospective.set(key, checked); validateRanges(prospective);
+            prospective.set(key, checked); validateRanges(prospective, key.equals("gun.range") ? checked.getAsInt() : ctx.gunRange());
             ctx.config.set(key, checked);
+            if (key.equals("gun.range")) ctx.npc.stats.ranged.setRange(checked.getAsInt());
             if (key.equals("gun.enabled") || key.equals("gun.autoAttack")) ctx.runtime.fireStopped = false;
             ctx.runtime.noAmmoRetry = 0;
             return Result.success(SafeJson.plain(checked));
@@ -230,14 +235,16 @@ Object cnpcgun$value4; GunAdapter cnpcgun$match4;
                 if (p.id.equals("gun.firingMode") && !EditorWeapons.firingMode(ctx, value.getAsString())) return Result.fail("UNSUPPORTED");
                 candidate.set(p.id, value);
             }
-            validateRanges(candidate); ctx.config.replace(candidate.snapshot());
+            validateRanges(candidate, values.has("gun.range") ? candidate.integer("gun.range") : ctx.gunRange());
+            ctx.config.replace(candidate.snapshot());
+            if (values.has("gun.range")) ctx.npc.stats.ranged.setRange(candidate.integer("gun.range"));
             if (values.has("gun.enabled") || values.has("gun.autoAttack")) ctx.runtime.fireStopped = false;
             ctx.runtime.noAmmoRetry = 0;
             return Result.success();
         } catch (IllegalArgumentException | IllegalStateException e) { return Result.fail("INVALID_ARGUMENT"); }
     }
-    public static void validateRanges(NpcConfig config) {
-        if (config.number("gun.minRange") > config.number("gun.range")
+    public static void validateRanges(NpcConfig config, int gunRange) {
+        if (config.number("gun.minRange") > gunRange
             || config.integer("gun.minInterval") > config.integer("gun.maxInterval")
             || config.integer("gun.reloadMinTicks") > config.integer("gun.reloadMaxTicks")
             || config.integer("ammo.minimumReserve") > config.integer("ammo.reserveLimit")) throw new IllegalArgumentException("invalid range");
@@ -471,18 +478,6 @@ Object cnpcgun$value12; EntityLiving cnpcgun$match12;
         if (((cnpcgun$value13 = target) instanceof EntityNPCInterface && (cnpcgun$match13 = (EntityNPCInterface)cnpcgun$value13) != null)) return npc.getFaction().isAggressiveToNpc(cnpcgun$match13);
         if (((cnpcgun$value14 = target) instanceof net.minecraft.entity.player.EntityPlayer && (cnpcgun$match14 = (net.minecraft.entity.player.EntityPlayer)cnpcgun$value14) != null)) return npc.getFaction().isAggressiveToPlayer(cnpcgun$match14);
         return npc.getFaction().getsAttacked && target instanceof net.minecraft.entity.monster.IMob;
-    }
-    private static void acquirePrefireTarget(EntityNPCInterface npc) {
-        NpcData data = data(npc); long now = npc.world.getTotalWorldTime();
-        if (!data.config.bool("combat.enabled") || !data.config.bool("gun.enabled") || !data.config.bool("gun.autoAttack")
-            || data.config.text("gun.prefire").equals("NONE") || !data.runtime.command.equals("AUTO")
-            || now < data.runtime.nextDecision || validTarget(npc, npc.getAttackTarget())) return;
-        double range = Math.min(data.config.number("combat.attackRange"), data.config.number("gun.range"));
-        EntityLivingBase nearest = null; double distance = range * range;
-        for (EntityLivingBase target : npc.world.getEntitiesWithinAABB(EntityLivingBase.class, npc.getEntityBoundingBox().grow(range), entity -> hostile(npc, entity))) {
-            double candidate = npc.getDistanceSq(target); if (candidate < distance) { nearest = target; distance = candidate; }
-        }
-        if (nearest != null) npc.setAttackTarget(nearest);
     }
     public static void rewardKill(EntityNPCInterface owner, EntityLivingBase victim) {
         if (!serverThread(owner) || !validNpc(owner) || victim == null || owner == victim || victim.world != owner.world) return;

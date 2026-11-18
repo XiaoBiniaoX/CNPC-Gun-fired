@@ -19,11 +19,11 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import noppes.npcs.entity.EntityNPCInterface;
 
-@Mod(modid = CNPCGun.MOD_ID, name = "CNPC-Gun for 1.12.2 V1.0.0", version = CNPCGun.VERSION,
-    acceptedMinecraftVersions = "[1.12.2]", acceptableRemoteVersions = "[1.0.0]",
+@Mod(modid = CNPCGun.MOD_ID, name = "CNPC-Gun for 1.12.2 V1.2.0", version = CNPCGun.VERSION,
+    acceptedMinecraftVersions = "[1.12.2]", acceptableRemoteVersions = "[1.2.0]",
     dependencies = "required-after:customnpcs;required-after:cnpcplus@[4.0.5,);after:cnpcmagic;after:npcpathfindinglegacy;after:tacz;after:cgm;after:techguns;after:flansmod;after:flammpfeil.slashblade")
 public final class CNPCGun {
-    public static final String MOD_ID = "cnpcgun", VERSION = "1.0.0", API_VERSION = "1";
+    public static final String MOD_ID = "cnpcgun", VERSION = "1.2.0", API_VERSION = "1";
     public static final Logger LOGGER = LogManager.getLogger(MOD_ID);
     @SidedProxy(clientSide = "bincnpc.gun.client.ClientProxy", serverSide = "bincnpc.gun.common.CommonProxy")
     public static bincnpc.gun.common.CommonProxy proxy;
@@ -37,6 +37,16 @@ public final class CNPCGun {
         AdapterRegistry.initialize();
         GunNetwork.startWorker();
         CombatDecisions.start();
+        LongRangeTargets.clear();
+        SightHooks.handler = (entity, target) -> {
+            if (!(entity instanceof EntityNPCInterface) || entity.world.isRemote) return null;
+            EntityNPCInterface npc = (EntityNPCInterface)entity;
+            if (!CombatService.serverThread(npc) || target.world != npc.world) return false;
+            net.minecraft.util.math.Vec3d from = npc.getPositionEyes(1), to = target.getPositionVector().add(0, target.getEyeHeight(), 0);
+            if (from.squareDistanceTo(to) <= 64.0 * 64.0) return null;
+            return npc.getDistanceSq(target) <= 2048.0 * 2048.0
+                && bincnpc.gun.throwing.CollisionSnapshot.clear((WorldServer)npc.world, npc, from, to);
+        };
         bincnpc.gun.throwing.ThrowPlanner.start();
         LOGGER.info("CNPC Gun {} initialized; adapters: {}", VERSION, AdapterRegistry.ids());
     }
@@ -52,6 +62,8 @@ public final class CNPCGun {
         }
         bincnpc.gun.throwing.ThrowPlanner.stop();
         CombatDecisions.stop();
+        LongRangeTargets.clear();
+        SightHooks.handler = null;
         GunNetwork.stopWorker();
         AdapterRegistry.clear();
         bincnpc.gun.throwing.ThrowAdapters.clear();

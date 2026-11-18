@@ -1,6 +1,8 @@
 package bincnpc.gun.client.gui;
 
 import bincnpc.gun.client.EditorSession;
+import bincnpc.gun.api.client.DrawerApi;
+import bincnpc.gun.api.client.LeaveHandler;
 import bincnpc.gun.client.gui.editor.*;
 import bincnpc.gun.client.gui.editor.EditorButton.Kind;
 import bincnpc.gun.client.gui.editor.EditorLayout.Box;
@@ -23,6 +25,8 @@ import bincnpc.gun.client.gui.legacy.GuiCompat.Language;
 import bincnpc.gun.client.gui.legacy.GuiCompat.Component;
 import noppes.npcs.client.gui.mainmenu.GuiNpcDisplay;
 import noppes.npcs.entity.EntityNPCInterface;
+import net.minecraft.util.ResourceLocation;
+import net.minecraft.util.text.TextComponentString;
 import bincnpc.gun.client.gui.legacy.GuiCompat.Keys;
 
 /** Fullscreen editor with local drafts and the existing server-authoritative protocol. */
@@ -39,6 +43,7 @@ public final class GuiWeapons extends Screen implements EditorDialogs.Host {
         BLADE("bladeGroup", Page.ACTIONS, Page.COMBOS, Page.PRESETS, Page.BLADE_SETTINGS);
         final String key; final Page[] pages;
         Group(String key, Page... pages) { this.key = key; this.pages = pages; }
+        ResourceLocation id() { return new ResourceLocation("cnpcgun", name().toLowerCase(Locale.ROOT)); }
     }
     private static final class Guard  {
 private final AbstractWidget widget;
@@ -109,6 +114,10 @@ public Runnable acknowledged() { return acknowledged; }
     private final Map<String, Map<String, List<String>>> invalidText = new HashMap<>();
     private final Map<Page, String> searches = new EnumMap<>(Page.class);
     private final Deque<Screen> dialogs = new ArrayDeque<>();
+    private DrawerApi.Page extensionPage;
+    private Screen extensionScreen, extensionDialog, tooltipTarget;
+    private boolean extensionFocused;
+    private long leaveRequest;
     private final List<Guard> guards = new ArrayList<>();
     private final List<Text> texts = new ArrayList<>();
     private final List<WeaponSlotButton> weaponButtons = new ArrayList<>();
@@ -125,7 +134,8 @@ public Runnable acknowledged() { return acknowledged; }
     private EditorButton previewButton;
     private NpcPreview preview;
     private EditorTextField searchField;
-    private Group openGroup = Group.INVENTORY;
+    private ResourceLocation openGroup = DrawerApi.INVENTORY;
+    private int navigationScroll, navigationHeight;
     private boolean saving;
     private Runnable saveContinuation;
     private int saveDelay;
@@ -219,6 +229,11 @@ public Runnable acknowledged() { return acknowledged; }
         if (!session.ready()) {
             empty(tr("loadingTitle"), GuiSupport.tr(session.status), false);
             if (!opened) { opened = true; session.send(Operation.OPEN, new JsonObject()); }
+        } else if (extensionScreen != null) {
+            pageTitle = extensionPage.title().getFormattedText(); pageHint = "";
+            Box area = body();
+            if (extensionScreen.width != area.width() || extensionScreen.height != area.height())
+                extensionScreen.resize(minecraft, area.width(), area.height());
         } else switch (page) {
 case WEAPONS:
 weapons(); break;
@@ -244,20 +259,100 @@ bladeSettings(); break;
         for (Screen dialog : dialogs) if (dialog.width != width || dialog.height != height) dialog.resize(minecraft, width, height);
     }
     private void navigation() {
-        int y = layout.sidebar.y();
-        for (Group group : Group.values()) {
-            boolean expanded = openGroup == group;
-            EditorButton drawer = button(new Box(layout.sidebar.x(), y, layout.sidebar.width(), 22), Component.literal((expanded ? "▾ " : "▸ ") + tr(group.key)), Kind.TOOL,
-                () -> { openGroup = openGroup == group ? null : group; rebuild(); });
-            drawer.setTooltip(Tooltip.create(label(group.key))); y += 24;
-            if (expanded) for (Page chosen : group.pages) {
-                EditorButton tab = button(new Box(layout.sidebar.x() + 6, y, layout.sidebar.width() - 6, 18), label(chosen.key), Kind.NAVIGATION, () -> {
+        List<DrawerApi.Drawer> drawers = new ArrayList<>();
+        for (Group group : Group.values()) drawers.add(new DrawerApi.Drawer(group.id(), new TextComponentString(tr(group.key))));
+        drawers.addAll(DrawerApi.drawers());
+        int y = layout.sidebar.y() - navigationScroll;
+        for (DrawerApi.Drawer entry : drawers) {
+            boolean expanded = entry.id().equals(openGroup);
+            Box box = new Box(layout.sidebar.x(), y, layout.sidebar.width(), 22);
+            if (box.y() >= layout.sidebar.y() && box.bottom() <= layout.sidebar.bottom()) {
+                EditorButton drawer = button(box, Component.literal((expanded ? "▾ " : "▸ ") + entry.title().getFormattedText()), Kind.TOOL,
+                    () -> { openGroup = expanded ? null : entry.id(); rebuild(); });
+                drawer.setTooltip(Tooltip.create(Component.literal(entry.title().getFormattedText())));
+            }
+            y += 24;
+            if (!expanded) continue;
+            for (Group group : Group.values()) if (group.id().equals(entry.id())) for (Page chosen : group.pages) {
+                navigationPage(y, label(chosen.key), extensionPage == null && page == chosen, () -> {
                     if (form != null && form.invalid()) { localError = tr("invalidField"); return; }
-                    if (preview != null && chosen != Page.ACTIONS && chosen != Page.COMBOS) { preview.dispose(); preview = null; }
-                    page = chosen; canvasExpanded = false; localError = ""; rebuild();
-                }); tab.selected = page == chosen; y += 20;
+                    requestLeave(extensionScreen, () -> {
+                        removeExtension();
+                        if (preview != null && chosen != Page.ACTIONS && chosen != Page.COMBOS) { preview.dispose(); preview = null; }
+                        page = chosen; canvasExpanded = false; localError = ""; rebuild();
+                    });
+                }); y += 20;
+            }
+            for (DrawerApi.Page extension : DrawerApi.pages(entry.id())) {
+                navigationPage(y, Component.literal(extension.title().getFormattedText()), extension == extensionPage, () -> openExtension(extension)); y += 20;
             }
         }
+        navigationHeight = y - layout.sidebar.y() + navigationScroll;
+        int clamped = EditorLayout.clampScroll(navigationScroll, navigationHeight, layout.sidebar.height());
+        if (clamped != navigationScroll) { navigationScroll = clamped; rebuild(); }
+    }
+    private void navigationPage(int y, Component title, boolean selected, Runnable clicked) {
+        Box box = new Box(layout.sidebar.x() + 6, y, layout.sidebar.width() - 6, 18);
+        if (box.y() < layout.sidebar.y() || box.bottom() > layout.sidebar.bottom()) return;
+        EditorButton tab = button(box, title, Kind.NAVIGATION, clicked); tab.selected = selected;
+        tab.setTooltip(Tooltip.create(title));
+    }
+    private void openExtension(DrawerApi.Page extension) {
+        if (extension == extensionPage) return;
+        Runnable open = () -> {
+            if (preview != null) {
+                if (extension.dialog()) preview.stop();
+                else { preview.dispose(); preview = null; }
+            }
+            Screen[] created = new Screen[1];
+            Runnable closePage = () -> closeExtension(created[0]);
+            DrawerApi.Context context = new DrawerApi.Context(session.npcId, session.snapshot,
+                dialog -> openDialog(NativePage.wrap(dialog, this::closeDialog)), this::closeDialog, closePage);
+            Screen screen = created[0] = NativePage.wrap(Objects.requireNonNull(extension.factory().apply(context), "drawer page screen"), closePage);
+            if (extension.dialog()) { extensionDialog = screen; openDialog(screen); return; }
+            removeExtension();
+            extensionPage = extension; extensionScreen = screen; extensionFocused = true;
+            canvasExpanded = false; setDragging(false); setFocused(null);
+            Box area = layout.body;
+            screen.init(minecraft, area.width(), area.height()); screen.added(); rebuild();
+        };
+        saveChanges(() -> { if (extension.dialog()) open.run(); else requestLeave(extensionScreen, open); });
+    }
+    private void requestLeave(Screen screen, Runnable after) {
+        if (closed || screen != null && screen != extensionScreen && !dialogs.contains(screen)) return;
+        long request = ++leaveRequest;
+        Runnable continueLeaving = () -> minecraft.addScheduledTask(() -> {
+            if (closed || request != leaveRequest || screen != null && screen != extensionScreen && !dialogs.contains(screen)) return;
+            ++leaveRequest;
+            after.run();
+        });
+        if (screen instanceof LeaveHandler) ((LeaveHandler)screen).requestLeave(continueLeaving);
+        else continueLeaving.run();
+    }
+    private void removeExtension() {
+        if (extensionScreen != null) {
+            for (Screen dialog : dialogs) dialog.removed();
+            dialogs.clear(); extensionDialog = null;
+            extensionScreen.removed();
+        }
+        extensionPage = null; extensionScreen = null; extensionFocused = false;
+    }
+    private void closeExtension(Screen screen) {
+        if (screen == null) return;
+        requestLeave(screen, () -> {
+            if (screen == extensionScreen) { removeExtension(); rebuild(); }
+            else while (dialogs.contains(screen)) closeDialog();
+        });
+    }
+    /** The GL pose is shared; scissor coordinates must also be translated to the host work area. */
+    private final class WorkspaceGraphics extends GuiGraphics {
+        private final GuiGraphics source;
+        private final Box area;
+        WorkspaceGraphics(GuiGraphics source, Box area) { super(extensionScreen); this.source = source; this.area = area; }
+        @Override public void enableScissor(int x, int y, int right, int bottom) {
+            source.enableScissor(area.x() + x, area.y() + y, area.x() + right, area.y() + bottom);
+        }
+        @Override public void disableScissor() { source.disableScissor(); }
     }
     private EditorForm newForm(Box box, String key) {
         formKey = key;
@@ -822,6 +917,17 @@ key = ""; break;
         EditorStyle.text(g, font, title.getString(), 104, 12, 82, EditorStyle.WHITE);
         g.fill(0, height - 26, width, height, EditorStyle.SLATE); g.hLine(0, width, height - 26, EditorStyle.EDGE);
         super.render(g, dialogs.isEmpty() ? mouseX : -10000, dialogs.isEmpty() ? mouseY : -10000, partialTick);
+        if (extensionScreen != null) {
+            Box area = body(); boolean hovered = dialogs.isEmpty() && !busy() && area.contains(mouseX, mouseY);
+            g.flush(); g.enableScissor(area.x(), area.y(), area.right(), area.bottom());
+            g.pose().pushPose(); g.pose().translate(area.x(), area.y(), 0);
+            WorkspaceGraphics workspace = new WorkspaceGraphics(g, area);
+            tooltipTarget = extensionScreen;
+            try {
+                extensionScreen.renderWithTooltip(workspace, hovered ? mouseX - area.x() : -10000,
+                    hovered ? mouseY - area.y() : -10000, partialTick);
+            } finally { tooltipTarget = null; g.pose().popPose(); g.disableScissor(); g.prepare2D(); }
+        }
         for (Text line : texts) EditorStyle.text(g, font, line.text, line.x, line.y, line.width, line.color);
         String status = !localError.isEmpty() ? localError : session.status.startsWith("cnpcgun.error") ? GuiSupport.tr(session.status)
             : busy() ? GuiSupport.tr("cnpcgun.gui.saving") : dirty() ? tr("unsaved") : GuiSupport.tr(session.status);
@@ -835,7 +941,9 @@ key = ""; break;
             List<Screen> layers = new ArrayList<>(dialogs); Collections.reverse(layers);
             for (int i = 0; i < layers.size(); i++) {
                 g.flush(); g.pose().pushPose();
-                layers.get(i).render(g, i == layers.size() - 1 ? mouseX : -10000, i == layers.size() - 1 ? mouseY : -10000, partialTick);
+                tooltipTarget = layers.get(i);
+                tooltipTarget.renderWithTooltip(new GuiGraphics(tooltipTarget), i == layers.size() - 1 ? mouseX : -10000, i == layers.size() - 1 ? mouseY : -10000, partialTick);
+                tooltipTarget = null;
                 g.flush(); g.pose().popPose();
             }
         }
@@ -846,49 +954,105 @@ key = ""; break;
     }
     @Override public void tick() {
         rebuildNow();
-        session.tick(!busy() && !dirty() && dialogs.isEmpty() && (searchField == null || !searchField.isFocused()) && (form == null || !form.editing() && !form.invalid()));
+        session.tick(extensionScreen == null && !busy() && !dirty() && dialogs.isEmpty() && (searchField == null || !searchField.isFocused()) && (form == null || !form.editing() && !form.invalid()));
         if (saveContinuation != null && --saveDelay <= 0) { Runnable next = saveContinuation; saveContinuation = null; next.run(); }
         else if (saving && !session.pending && saveContinuation == null) { saving = false; localError = GuiSupport.tr(session.status); }
         if (form != null) form.tick();
         if (searchField != null) searchField.tick();
         if (preview != null) preview.tick();
         if (!dialogs.isEmpty()) dialogs.peek().tick();
+        else if (extensionScreen != null) extensionScreen.tick();
         updateControls();
     }
     @Override public void openDialog(Screen dialog) {
-        setDragging(false); setFocused(null); if (!dialogs.isEmpty()) dialogs.peek().setFocused(null);
-        dialogs.push(dialog); dialog.init(minecraft, width, height);
+        setDragging(false); setFocused(null);
+        if (extensionScreen != null) extensionScreen.setDragging(false);
+        if (!dialogs.isEmpty()) dialogs.peek().setDragging(false);
+        dialogs.push(dialog); dialog.init(minecraft, width, height); dialog.added();
     }
     @Override public void closeDialog() {
-Object cnpcgun$value0; EditorDialogs.Base cnpcgun$match0;
-
         if (dialogs.isEmpty()) return;
-        dialogs.pop().removed();
-        if (dialogs.isEmpty()) rebuild(); else if (((cnpcgun$value0 = dialogs.peek()) instanceof EditorDialogs.Base && (cnpcgun$match0 = (EditorDialogs.Base)cnpcgun$value0) != null)) cnpcgun$match0.rebuild();
+        Screen removed = dialogs.pop();
+        if (removed == extensionDialog) extensionDialog = null;
+        removed.removed();
+        if (dialogs.isEmpty()) rebuild(); else if (dialogs.peek() != extensionDialog && dialogs.peek() instanceof EditorDialogs.Base) ((EditorDialogs.Base)dialogs.peek()).rebuild();
     }
     @Override public boolean mouseClicked(double x, double y, int button) {
-        if (!dialogs.isEmpty()) { dialogs.peek().mouseClicked(x, y, button); return true; }
-        return busy() || super.mouseClicked(x, y, button);
+        if (!dialogs.isEmpty()) {
+            Screen dialog = dialogs.peek(); AbstractWidget focused = dialog.getFocused(); long request = leaveRequest;
+            dialog.mouseClicked(x, y, button);
+            if (dialogs.contains(dialog) && request != leaveRequest) dialog.setFocused(focused);
+            return true;
+        }
+        if (busy()) return true;
+        if (extensionScreen != null) {
+            Box area = body();
+            if (area.contains(x, y)) {
+                extensionFocused = true; setFocused(null);
+                Screen screen = extensionScreen; AbstractWidget focused = screen.getFocused(); long request = leaveRequest;
+                screen.mouseClicked(x - area.x(), y - area.y(), button);
+                if (extensionScreen == screen && request != leaveRequest) screen.setFocused(focused);
+                return true;
+            }
+            extensionScreen.setDragging(false);
+        }
+        boolean clicked = super.mouseClicked(x, y, button);
+        if (extensionScreen != null && extensionFocused) { setFocused(null); setDragging(false); }
+        return clicked;
     }
     @Override public boolean mouseReleased(double x, double y, int button) {
         if (!dialogs.isEmpty()) { dialogs.peek().mouseReleased(x, y, button); return true; }
+        if (extensionScreen != null && extensionFocused) {
+            Box area = body(); extensionScreen.mouseReleased(x - area.x(), y - area.y(), button); return true;
+        }
         return super.mouseReleased(x, y, button);
     }
     @Override public boolean mouseDragged(double x, double y, int button, double dx, double dy) {
         if (!dialogs.isEmpty()) { dialogs.peek().mouseDragged(x, y, button, dx, dy); return true; }
         if (busy()) return true;
+        if (extensionScreen != null && extensionFocused) {
+            Box area = body(); extensionScreen.mouseDragged(x - area.x(), y - area.y(), button, dx, dy); return true;
+        }
         if (canvas != null && getFocused() == canvas) return canvas.mouseDragged(x, y, button, dx, dy);
         return super.mouseDragged(x, y, button, dx, dy);
     }
-    @Override public boolean mouseScrolled(double x, double y, double delta) { if (!dialogs.isEmpty()) { dialogs.peek().mouseScrolled(x, y, delta); return true; } return busy() || super.mouseScrolled(x, y, delta); }
-    @Override public boolean charTyped(char letter, int modifiers) { if (!dialogs.isEmpty()) { dialogs.peek().charTyped(letter, modifiers); return true; } return busy() || super.charTyped(letter, modifiers); }
+    @Override public boolean mouseScrolled(double x, double y, double delta) {
+        if (!dialogs.isEmpty()) { dialogs.peek().mouseScrolled(x, y, delta); return true; }
+        if (!busy() && !canvasExpanded && layout.sidebar.contains(x, y)) {
+            navigationScroll = EditorLayout.clampScroll(navigationScroll - (int)(delta * 20), navigationHeight, layout.sidebar.height()); rebuild(); return true;
+        }
+        if (!busy() && extensionScreen != null && body().contains(x, y)) {
+            Box area = body(); extensionScreen.mouseScrolled(x - area.x(), y - area.y(), delta); return true;
+        }
+        return busy() || super.mouseScrolled(x, y, delta);
+    }
+    @Override public void mouseMoved(double x, double y) {
+        if (!dialogs.isEmpty()) { dialogs.peek().mouseMoved(x, y); return; }
+        if (extensionScreen != null) {
+            Box area = body(); boolean hovered = !busy() && area.contains(x, y);
+            extensionScreen.mouseMoved(hovered ? x - area.x() : -10000, hovered ? y - area.y() : -10000);
+        }
+    }
+    @Override public boolean charTyped(char letter, int modifiers) {
+        if (!dialogs.isEmpty()) { dialogs.peek().charTyped(letter, modifiers); return true; }
+        if (busy()) return true;
+        return extensionScreen != null && extensionFocused ? extensionScreen.charTyped(letter, modifiers) : super.charTyped(letter, modifiers);
+    }
     @Override public boolean keyPressed(int key, int scan, int modifiers) {
         if (!dialogs.isEmpty()) return dialogs.peek().keyPressed(key, scan, modifiers);
+        if (busy()) return true;
+        if (extensionScreen != null && (extensionFocused || key == Keys.KEY_ESCAPE))
+            return extensionScreen.keyPressed(key, scan, modifiers);
         if (key == Keys.KEY_S && (modifiers & Keys.GLFW_MOD_CONTROL) != 0) { saveChanges(null); return true; }
         return super.keyPressed(key, scan, modifiers);
     }
-    @Override public boolean keyReleased(int key, int scan, int modifiers) { if (!dialogs.isEmpty()) { dialogs.peek().keyReleased(key, scan, modifiers); return true; } return busy() || super.keyReleased(key, scan, modifiers); }
+    @Override public boolean keyReleased(int key, int scan, int modifiers) {
+        if (!dialogs.isEmpty()) { dialogs.peek().keyReleased(key, scan, modifiers); return true; }
+        if (busy()) return true;
+        return extensionScreen != null && extensionFocused ? extensionScreen.keyReleased(key, scan, modifiers) : super.keyReleased(key, scan, modifiers);
+    }
     @Override public void setTooltipForNextRenderPass(List<FormattedCharSequence> lines, ClientTooltipPositioner positioner, boolean force) {
+        if (tooltipTarget != null) { tooltipTarget.setTooltipForNextRenderPass(lines, positioner, force); return; }
         if (queuedTooltip == null || force) { queuedTooltip = bincnpc.gun.common.legacy.Legacy.copyList(lines); tooltipPositioner = positioner; }
     }
     @Override public void setTooltipForNextRenderPass(List<FormattedCharSequence> lines) { setTooltipForNextRenderPass(lines, DefaultTooltipPositioner.INSTANCE, false); }
@@ -897,12 +1061,16 @@ Object cnpcgun$value0; EditorDialogs.Base cnpcgun$match0;
     private void returnAppearance() { if (!closed) minecraft.displayGuiScreen(new GuiNpcDisplay(npc)); }
     @Override public void onClose() {
         if (busy()) { localError = tr("waitForSave"); return; }
+        if (extensionDialog != null) requestLeave(extensionDialog, () -> requestLeave(extensionScreen, this::closeEditor));
+        else requestLeave(extensionScreen, this::closeEditor);
+    }
+    private void closeEditor() {
         if (!dirty() && (form == null || !form.invalid())) { returnAppearance(); return; }
         EditorDialogs.confirm(this, label("leaveTitle"), tr("leaveMessage"), unsavedDetails(), bincnpc.gun.common.legacy.Legacy.list(
             new EditorDialogs.Decision(label("saveAndReturn"), Kind.PRIMARY, () -> saveChanges(this::returnAppearance)),
             new EditorDialogs.Decision(label("discardAndReturn"), Kind.DANGER, this::returnAppearance),
             new EditorDialogs.Decision(label("continueEditing"), Kind.NORMAL, () -> {})));
     }
-    @Override public void removed() { if (!closed) { closed = true; if (preview != null) preview.dispose(); for (Screen dialog : dialogs) dialog.removed(); dialogs.clear(); session.close(); } super.removed(); }
+    @Override public void removed() { if (!closed) { closed = true; ++leaveRequest; if (preview != null) preview.dispose(); removeExtension(); for (Screen dialog : dialogs) dialog.removed(); dialogs.clear(); extensionDialog = null; session.close(); } super.removed(); }
     @Override public boolean isPauseScreen() { return false; }
 }

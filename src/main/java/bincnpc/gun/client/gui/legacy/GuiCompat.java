@@ -77,7 +77,7 @@ public final class GuiCompat {
         public void translate(double x, double y, double z) { GlStateManager.translate(x, y, z); }
         public void scale(float x, float y, float z) { GlStateManager.scale(x, y, z); }
     }
-    public static final class GuiGraphics {
+    public static class GuiGraphics {
         private final Screen screen;
         private final Deque<int[]> scissors = new ArrayDeque<>();
         private final Pose pose = new Pose();
@@ -244,8 +244,11 @@ public final class GuiCompat {
         public void setDragging(boolean value){dragging=value;}
         public boolean isDragging(){return dragging;}
         public void render(GuiGraphics g,int mx,int my,float tick){for(AbstractWidget widget:new ArrayList<>(widgets))widget.render(g,mx,my,tick);}
+        public void renderWithTooltip(GuiGraphics g,int mx,int my,float tick){tooltip=null;render(g,mx,my,tick);if(tooltip!=null)g.renderTooltip(font,tooltip,DefaultTooltipPositioner.INSTANCE,mx,my);}
         @Override public final void drawScreen(int mx,int my,float tick){tooltip=null;GuiGraphics g=new GuiGraphics(this);g.beginFrame();try{render(g,mx,my,tick);if(tooltip!=null)g.renderTooltip(font,tooltip,DefaultTooltipPositioner.INSTANCE,mx,my);}finally{g.endFrame();}}
         public void tick(){}
+        public void added(){}
+        public void mouseMoved(double x,double y){}
         @Override public final void updateScreen(){tick();}
         public void removed(){}
         @Override public final void onGuiClosed(){Keyboard.enableRepeatEvents(false);removed();}
@@ -259,7 +262,7 @@ public final class GuiCompat {
         public boolean mouseDragged(double mx,double my,int button,double dx,double dy){return focused!=null&&focused.mouseDragged(mx,my,button,dx,dy);}
         @Override protected final void mouseClickMove(int mx,int my,int button,long elapsed){mouseDragged(mx,my,button,mx-lastX,my-lastY);lastX=mx;lastY=my;}
         public boolean mouseScrolled(double mx,double my,double delta){for(AbstractWidget widget:widgets)if(widget.mouseScrolled(mx,my,delta))return true;return false;}
-        @Override public void handleMouseInput()throws IOException{super.handleMouseInput();int delta=Mouse.getEventDWheel();if(delta!=0)mouseScrolled(Mouse.getEventX()*width/(double)mc.displayWidth,height-Mouse.getEventY()*height/(double)mc.displayHeight-1,Math.signum(delta));}
+        @Override public void handleMouseInput()throws IOException{int delta=Mouse.getEventDWheel();if(delta==0)super.handleMouseInput();double x=Mouse.getEventX()*width/(double)mc.displayWidth,y=height-Mouse.getEventY()*height/(double)mc.displayHeight-1;mouseMoved(x,y);if(delta!=0)mouseScrolled(x,y,Math.signum(delta));}
         public boolean keyPressed(int key,int scan,int modifiers){if(key==Keyboard.KEY_ESCAPE){onClose();return true;}if(focused!=null&&focused.keyPressed(key,scan,modifiers))return true;if(key==Keyboard.KEY_TAB){List<AbstractWidget> available=new ArrayList<>();for(AbstractWidget w:widgets)if(w.visible&&w.active)available.add(w);if(!available.isEmpty())setFocused(available.get(Math.floorMod(available.indexOf(focused)+((modifiers&Keys.GLFW_MOD_SHIFT)!=0?-1:1),available.size())));return true;}return false;}
         public boolean keyReleased(int key,int scan,int modifiers){return focused!=null&&focused.keyReleased(key,scan,modifiers);}
         public boolean charTyped(char letter,int modifiers){return focused!=null&&focused.charTyped(letter,modifiers);}
