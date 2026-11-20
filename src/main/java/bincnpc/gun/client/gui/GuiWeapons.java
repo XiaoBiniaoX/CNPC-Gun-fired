@@ -421,7 +421,7 @@ bladeSettings(); break;
     private void shooting() {
         if (!gun()) { empty(tr("noGun"), tr("noGunHint"), true); return; }
         newForm(body(), "shooting");
-        Set<String> basic = bincnpc.gun.common.legacy.Legacy.set("gun.enabled", "gun.autoAttack", "gun.minRange", "gun.range", "gun.requireAim", "gun.moveFire", "gun.jumpFire", "gun.blindFire", "gun.lostSight", "gun.prefire", "gun.accuracy");
+        Set<String> basic = bincnpc.gun.common.legacy.Legacy.set("gun.enabled", "gun.autoAttack", "gun.minRange", "gun.range", "gun.requireAim", "gun.moveFire", "gun.jumpFire", "gun.blindFire", "gun.lostSight", "gun.prefire", "gun.accuracy", "gun.predictiveAim");
         fields(tr("engagement"), p -> basic.contains(p.id) && !bincnpc.gun.common.legacy.Legacy.set("gun.requireAim", "gun.blindFire", "gun.lostSight", "gun.prefire").contains(p.id));
         segments("gun.prefire"); segments("gun.lostSight");
         form.heading(tr("firePattern"));

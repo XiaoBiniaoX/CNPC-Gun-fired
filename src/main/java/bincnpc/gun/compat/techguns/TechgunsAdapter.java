@@ -8,6 +8,9 @@ import bincnpc.gun.gun.ammo.AmmoInventory;
 import bincnpc.gun.mixin.compat.TechgunsGunAccess;
 import techguns.items.guns.*;
 import techguns.entities.projectiles.EnumBulletFirePos;
+import techguns.entities.projectiles.LaserProjectile;
+import techguns.entities.projectiles.NDRProjectile;
+import techguns.entities.projectiles.TeslaProjectile;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.*;
 import java.util.*;
@@ -106,6 +109,17 @@ public final class TechgunsAdapter extends NativeMagazineAdapter {
         c.firingModes=new String[]{"NATIVE","SINGLE","SEMI","AUTO","BURST","CUSTOM"};c.projectileModel="INTERNAL";
         c.supportsSpecialMechanics=stack.getItem() instanceof GenericGunCharge;
         c.specialMechanics=c.supportsSpecialMechanics?new String[]{"CHARGE"}:new String[0];return c;
+    }
+    @Override public double projectileSpeed(CombatContext ctx) {
+        GenericGun gun=gun(ctx.weapon);
+        if(gun instanceof GenericGunCharge)return 0;
+        TechgunsGunAccess access=access(ctx.weapon);
+        ProjectileSelector<?> projectiles=access.cnpcgun$projectiles();
+        if(projectiles==null)return 0;
+        IProjectileFactory<?> factory=projectiles.getFactoryForType(gun.getCurrentAmmoVariantKey(ctx.weapon));
+        if(factory==null || factory instanceof LaserProjectile.Factory || factory instanceof NDRProjectile.Factory
+                || factory instanceof TeslaProjectile.Factory)return 0;
+        return factory.getDamageModifier().getVelocity(access.cnpcgun$projectileSpeed());
     }
     @Override protected Result shoot(CombatContext ctx) {
         GenericGun gun=gun(ctx.weapon);

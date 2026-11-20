@@ -110,6 +110,11 @@ public final class TaczAdapter implements GunAdapter {
         c.supportsSpecialMechanics = true; c.specialMechanics = new String[]{"BOLT", "HEAT", "NATIVE_SCRIPTS"}; return c;
     }
     @Override public int baseInterval(ItemStack stack) { return Math.max(1, (int)Math.ceil(data(stack).getShootIntervalMs() / 50.0)); }
+    @Override public double projectileSpeed(CombatContext ctx) {
+        GunCombatData gunData = data(ctx.weapon);
+        BulletCombatData bullet = gunData == null ? null : gunData.getBulletData();
+        return bullet == null ? 0 : bullet.getProcessedSpeed();
+    }
     @Override public Result fire(CombatContext ctx) {
         IGun gun = gun(ctx.weapon); GunCombatData data = data(ctx.weapon);
         if (ctx.config.bool("ammo.infinite") || data.isReloadInfinite()) {

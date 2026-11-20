@@ -19,11 +19,11 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import noppes.npcs.entity.EntityNPCInterface;
 
-@Mod(modid = CNPCGun.MOD_ID, name = "CNPC-Gun for 1.12.2 V1.2.0", version = CNPCGun.VERSION,
-    acceptedMinecraftVersions = "[1.12.2]", acceptableRemoteVersions = "[1.2.0]",
+@Mod(modid = CNPCGun.MOD_ID, name = "CNPC-Gun for 1.12.2 V" + CNPCGun.VERSION, version = CNPCGun.VERSION,
+    acceptedMinecraftVersions = "[1.12.2]", acceptableRemoteVersions = "[" + CNPCGun.VERSION + "]",
     dependencies = "required-after:customnpcs;required-after:cnpcplus@[4.0.5,);after:cnpcmagic;after:npcpathfindinglegacy;after:tacz;after:cgm;after:techguns;after:flansmod;after:flammpfeil.slashblade")
 public final class CNPCGun {
-    public static final String MOD_ID = "cnpcgun", VERSION = "1.2.0", API_VERSION = "1";
+    public static final String MOD_ID = "cnpcgun", VERSION = "1.2.5", API_VERSION = "1";
     public static final Logger LOGGER = LogManager.getLogger(MOD_ID);
     @SidedProxy(clientSide = "bincnpc.gun.client.ClientProxy", serverSide = "bincnpc.gun.common.CommonProxy")
     public static bincnpc.gun.common.CommonProxy proxy;

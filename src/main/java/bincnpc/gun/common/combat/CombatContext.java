@@ -1,10 +1,15 @@
 package bincnpc.gun.common.combat;
 
+import bincnpc.gun.common.adapter.AdapterRegistry;
 import bincnpc.gun.common.config.NpcConfig;
+import bincnpc.gun.common.legacy.Platform;
 import bincnpc.gun.common.npc.*;
+import bincnpc.gun.gun.adapter.GunAdapter;
+import bincnpc.gun.gun.controller.AimPrediction;
 import java.util.List;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.item.ItemStack;
+import net.minecraft.util.math.Vec3d;
 import noppes.npcs.entity.EntityNPCInterface;
 
 public final class CombatContext {
@@ -16,6 +21,7 @@ public final class CombatContext {
     public final EntityLivingBase target;
     public final long now;
     public final double distance;
+    private Vec3d aimPoint;
     public CombatContext(EntityNPCInterface npc) { this(npc, npc == null ? null : npc.getAttackTarget()); }
     public CombatContext(EntityNPCInterface npc, EntityLivingBase target) {
         this(npc, target, mainHand(npc));
@@ -50,14 +56,29 @@ public final class CombatContext {
     }
     public float yaw() {
         if (target == null) return npc.rotationYaw;
-        return (float)(Math.toDegrees(Math.atan2(target.posZ - npc.posZ, target.posX - npc.posX)) - 90) + runtime.shotYawOffset;
+        Vec3d point = aimPoint();
+        return (float)(Math.toDegrees(Math.atan2(point.z - npc.posZ, point.x - npc.posX)) - 90) + runtime.shotYawOffset;
     }
     public float pitch() {
         if (target == null) return npc.rotationPitch;
-        double dx = target.posX - npc.posX, dz = target.posZ - npc.posZ;
-        return net.minecraft.util.math.MathHelper.clamp((float)-Math.toDegrees(Math.atan2(bincnpc.gun.common.legacy.Platform.eyeY(target) - bincnpc.gun.common.legacy.Platform.eyeY(npc), Math.sqrt(dx * dx + dz * dz))) + runtime.shotPitchOffset, -90, 90);
+        Vec3d point = aimPoint();
+        double dx = point.x - npc.posX, dz = point.z - npc.posZ;
+        return net.minecraft.util.math.MathHelper.clamp((float)-Math.toDegrees(Math.atan2(point.y - Platform.eyeY(npc), Math.sqrt(dx * dx + dz * dz))) + runtime.shotPitchOffset, -90, 90);
     }
-    public net.minecraft.util.math.Vec3d shotDirection() { return net.minecraft.util.math.Vec3d.fromPitchYaw(pitch(), yaw()); }
+    private Vec3d aimPoint() {
+        if (aimPoint != null) return aimPoint;
+        aimPoint = new Vec3d(target.posX, Platform.eyeY(target), target.posZ);
+        AimPrediction prediction = runtime.prediction;
+        if (weapon == runtime.lastStack && runtime.adapter instanceof GunAdapter && config.bool("gun.predictiveAim")
+                && CombatService.serverThread(npc) && !data.throwing.blocksAttack(now) && prediction.moving(target.getUniqueID(), now)) {
+            GunAdapter gun = (GunAdapter)runtime.adapter;
+            double speed = AdapterRegistry.query(gun, () -> gun.projectileSpeed(this), 0.0);
+            double time = prediction.time(aimPoint.x - npc.posX, aimPoint.y - Platform.eyeY(npc), aimPoint.z - npc.posZ, speed);
+            if (time > 0) aimPoint = aimPoint.add(prediction.vx() * time, prediction.vy() * time, prediction.vz() * time);
+        }
+        return aimPoint;
+    }
+    public Vec3d shotDirection() { return Vec3d.fromPitchYaw(pitch(), yaw()); }
     public double spreadMultiplier() {
         if (config.text("gun.prefire").equals("SWEEP")) return 2;
         double spread = config.number("gun.spreadMultiplier") * (100 - config.number("gun.accuracy")) / 50;

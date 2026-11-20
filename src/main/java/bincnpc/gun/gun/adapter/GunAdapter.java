@@ -30,6 +30,8 @@ public interface GunAdapter extends WeaponAdapter {
     default int magazineCapacity(ItemStack stack) { return -1; }
     default void resetReserve(CombatContext context, ItemStack weapon) {}
     default int baseInterval(ItemStack stack) { return 4; }
+    /** Blocks per tick; zero for unknown or instantaneous projectiles. */
+    default double projectileSpeed(CombatContext context) { return 0; }
     default Double spread(ItemStack stack) { return null; }
     default Double recoil(ItemStack stack) { return null; }
     default Object aimState(CombatContext context) { return null; }

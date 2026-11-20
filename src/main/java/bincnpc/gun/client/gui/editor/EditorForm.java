@@ -170,6 +170,8 @@ Object cnpcgun$value1; EditorTextField cnpcgun$match1;
     private String hint(Field field) {
         if (!field.available.getAsBoolean()) return field.reason;
         Parameter p = field.parameter;
+        if (p.id.equals("weapon.returnPrimary")) return GuiSupport.tr("cnpcgun.editor.returnPrimaryHint");
+        if (p.id.equals("gun.predictiveAim")) return GuiSupport.tr("cnpcgun.editor.predictiveAimHint");
         if (p.min != null) {
             double scale = percentage(p) ? 100 : 1;
             return displayNumber(new JsonPrimitive(p.min * scale), false) + " – " + displayNumber(new JsonPrimitive(p.max * scale), false) + " " + unit(p);
@@ -253,9 +255,10 @@ Object cnpcgun$value2; EditorTextField cnpcgun$match2;
             for (Field field : fields) if (field.parameter != null && inViewport(field) && field.box.contains(mouseX, mouseY)
                 && (field.controls.size() > 1 && mouseY < field.box.y() + 20 || mouseX < field.controls.get(0).getX() - 4 || !field.available.getAsBoolean())) {
                 String label = fieldLabel(field);
-                if (!field.available.getAsBoolean()) label += "\n" + field.reason;
-                if (font.width(label) > (field.controls.size() > 1 ? field.box.width() / 2 - 8 : field.controls.get(0).getX() - field.box.x() - 10) || !field.available.getAsBoolean())
-                    setTooltip(Tooltip.create(Component.literal(label)));
+                boolean available = field.available.getAsBoolean();
+                boolean explained = field.parameter.id.equals("weapon.returnPrimary") || field.parameter.id.equals("gun.predictiveAim");
+                if (explained || font.width(label) > (field.controls.size() > 1 ? field.box.width() / 2 - 8 : field.controls.get(0).getX() - field.box.x() - 10) || !available)
+                    setTooltip(Tooltip.create(Component.literal(explained || !available ? label + "\n" + hint(field) : label)));
             }
         }
     }

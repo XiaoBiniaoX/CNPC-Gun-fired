@@ -5,12 +5,14 @@ import bincnpc.gun.common.api.Result;
 import bincnpc.gun.common.api.Views;
 import bincnpc.gun.common.combat.Scheduler;
 import bincnpc.gun.common.script.WeaponEvent;
+import bincnpc.gun.gun.controller.AimPrediction;
 import java.util.*;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.item.ItemStack;
 
 public final class RuntimeState {
     public final bincnpc.gun.common.combat.MovementState movement = new bincnpc.gun.common.combat.MovementState();
+    public final AimPrediction prediction = new AimPrediction();
     public long lastTick = Long.MIN_VALUE, nextDecision, nextShot, noAmmoRetry, nextSwitch, lastSupply,
         firstTargetTick, lastHurt = -1000, nextTargetScan, actionEnd;
     public long inventoryFingerprint, nextCapabilityCheck, nextAnimationSummary, lastFired = -1000;

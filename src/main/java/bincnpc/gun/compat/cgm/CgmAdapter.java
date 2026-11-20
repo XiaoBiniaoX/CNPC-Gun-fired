@@ -51,6 +51,7 @@ public final class CgmAdapter extends NativeMagazineAdapter {
         c.firingModes = new String[]{"NATIVE", "SINGLE", "SEMI", "AUTO", "BURST", "CUSTOM"};
         c.projectileModel = "CUSTOM_PROJECTILE"; return c;
     }
+    @Override public double projectileSpeed(CombatContext ctx) { return gun(ctx.weapon).projectile.speed; }
     @Override protected Result shoot(CombatContext ctx) {
         Gun gun = gun(ctx.weapon).copy();
         gun.general.spread = (float)Math.min(ctx.config.number("gun.maxSpread"), gun.general.spread * ctx.spreadMultiplier());

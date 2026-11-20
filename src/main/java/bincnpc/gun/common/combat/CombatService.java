@@ -78,6 +78,7 @@ Object cnpcgun$value3; EntityLivingBase cnpcgun$match3;
         if (!ctx.config.bool("combat.enabled")) {
             ctx.data.throwing.cancel();
             if (!ctx.runtime.combatState.equals("DISABLED")) {
+                ctx.data.armory.returnTimer.reset(); ctx.runtime.prediction.clear();
                 if (ctx.runtime.adapter != null) AdapterRegistry.run(ctx.runtime.adapter, () -> ctx.runtime.adapter.cancel(ctx));
                 ctx.data.blade.reset(); ctx.runtime.scheduler.clear(); ctx.npc.getNavigator().clearPath();
                 ctx.runtime.reloading = false; ctx.runtime.reloadTargetTicks = 0; ctx.runtime.reloadObserved = false;
@@ -85,20 +86,33 @@ Object cnpcgun$value3; EntityLivingBase cnpcgun$match3;
             setState(ctx, "DISABLED");
             EventBridge.flush(ctx); return;
         }
+        UUID target = ctx.validTarget() ? ctx.target.getUniqueID() : null;
+        if (target != null && ctx.config.bool("gun.predictiveAim"))
+            ctx.runtime.prediction.sample(target, ctx.now, ctx.target.posX, ctx.target.posY, ctx.target.posZ);
+        else ctx.runtime.prediction.clear();
         if (ctx.runtime.adapter != null) AdapterRegistry.run(ctx.runtime.adapter, () -> ctx.runtime.adapter.tick(ctx));
         if (ctx.runtime.adapter != null && !AdapterRegistry.loaded(ctx.runtime.adapter.id())) refresh(ctx);
-        UUID target = ctx.validTarget() ? ctx.target.getUniqueID() : null;
         if (!Objects.equals(target, ctx.runtime.targetId)) {
             ctx.runtime.targetId = target; ctx.runtime.firstTargetTick = ctx.now;
             if (target != null) ctx.runtime.fireStopped = false;
             ctx.runtime.nextShot = ctx.now + ctx.config.integer("gun.firstDelay") + ctx.config.integer("gun.windup");
             EventBridge.emit(ctx, "combat.target_changed", "", Result.success());
         }
-        if (ctx.target != null && !ctx.validTarget()) npc.setAttackTarget(null);
-        if (!ctx.validTarget()) {
+        if (ctx.target != null && target == null) npc.setAttackTarget(null);
+        if (target == null) {
             setState(ctx, "IDLE");
             if (ctx.config.bool("combat.stopOnInvalidTarget") && ctx.runtime.scheduler.interruptible
                     && ctx.runtime.scheduler.channel.equals("GUN")) ctx.data.gun.stop(ctx);
+        }
+        Armory armory = ctx.data.armory;
+        if (armory.returnTimer.tick(ctx.now, target != null)) {
+            int primary = ctx.config.integer("weapon.primarySlot");
+            if (armory.active == primary) armory.returnTimer.reset();
+            else if (ctx.config.bool("weapon.returnPrimary") && ctx.runtime.command.equals("AUTO") && !ctx.runtime.reloading
+                    && armory.switchTo(ctx, primary).ok) {
+                armory.returnTimer.reset();
+                invalidateDecision(ctx); EventBridge.flush(ctx); return;
+            }
         }
         if (ctx.now >= ctx.runtime.noAmmoRetry && ctx.runtime.noAmmoEvent) {
             long fingerprint = new AmmoInventory(npc).fingerprint();
@@ -459,6 +473,7 @@ Object cnpcgun$value10; GunAdapter cnpcgun$match10;
     }
     private static void restoreDefaults(CombatContext ctx) {
         ctx.data.throwing.cancel();
+        ctx.runtime.prediction.clear();
         if (ctx.runtime.adapter != null) AdapterRegistry.cancel(ctx.runtime.adapter, ctx);
         ctx.data.blade.reset(); ctx.runtime.scheduler.clear(); ctx.runtime.nextSwitch = 0;
         ctx.data.armory.restorePrimary(ctx);

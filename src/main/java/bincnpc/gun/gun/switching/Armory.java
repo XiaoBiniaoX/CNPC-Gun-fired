@@ -12,6 +12,7 @@ import noppes.npcs.entity.EntityNPCInterface;
 /** Six logical slots. The active slot is owned solely by CNPC's actual right hand. */
 public final class Armory {
     public static final int SIZE = 6;
+    public final ReturnTimer returnTimer = new ReturnTimer();
     private final ItemStack[] slots = {ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY};
     public int active;
 
@@ -96,6 +97,7 @@ public final class Armory {
 
     /** Called after an edit or NPC reset, with native actions already cancelled. */
     public void restorePrimary(CombatContext ctx) {
+        returnTimer.reset();
         int preferred = ctx.config.integer("weapon.primarySlot");
         if (preferred == active || get(ctx.npc, preferred).isEmpty()) return;
         slots[active] = get(ctx.npc, active);
@@ -122,6 +124,7 @@ public final class Armory {
     }
 
     public void load(NBTTagCompound tag) {
+        returnTimer.reset();
         if (tag == null) tag = new NBTTagCompound();
         active = Math.max(0, Math.min(SIZE - 1, tag.getInteger("Active")));
         java.util.Arrays.fill(slots, ItemStack.EMPTY);

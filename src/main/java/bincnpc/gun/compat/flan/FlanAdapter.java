@@ -20,6 +20,12 @@ public final class FlanAdapter extends NativeMagazineAdapter {
         for(ShootableType ammo:type(weapon).ammo)if(ammo.item instanceof ItemShootable && ammo.roundsPerItem>0)return new ItemStack(ammo.item);
         return ItemStack.EMPTY;
     }
+    private ItemStack loadedMagazine(ItemStack weapon) {
+        for(int i=0;i<slots(weapon);i++) {
+            ItemStack mag=magazine(weapon,i);if(rounds(mag)>0)return mag;
+        }
+        return ItemStack.EMPTY;
+    }
     @Override public String id() { return "flansmod"; }
     @Override public boolean matches(ItemStack stack) { return stack!=null && !stack.isEmpty() && stack.getItem() instanceof ItemGun && type(stack)!=null; }
     @Override public String weaponId(ItemStack stack) { return "flansmod:"+type(stack).shortName; }
@@ -73,6 +79,13 @@ public final class FlanAdapter extends NativeMagazineAdapter {
         }
     }
     @Override public int baseInterval(ItemStack stack) { return Math.max(1,(int)Math.ceil(type(stack).GetShootDelay(stack))); }
+    @Override public double projectileSpeed(CombatContext ctx) {
+        ItemStack ammo=loadedMagazine(ctx.weapon);
+        if(ammo.isEmpty() && infinite(ctx))ammo=defaultMagazine(ctx.weapon);
+        // EntityBullet divides the configured speed by five; zero uses Flan's hitscan path.
+        return ammo.getItem() instanceof ItemShootable && ((ItemShootable)ammo.getItem()).type instanceof BulletType
+            ? type(ctx.weapon).getBulletSpeed(ctx.weapon)/5.0 : 0;
+    }
     @Override public Double recoil(ItemStack stack) { return (double)type(stack).getRecoil(stack); }
     @Override public Double spread(ItemStack stack) { return (double)type(stack).getSpread(stack); }
     @Override protected int nativeReloadTicks(ItemStack stack) { return Math.max(1,(int)Math.ceil(type(stack).getReloadTime(stack))); }
@@ -85,8 +98,7 @@ public final class FlanAdapter extends NativeMagazineAdapter {
         c.firingModes=new String[]{"NATIVE","SINGLE","SEMI","AUTO","BURST","CUSTOM"};c.projectileModel="INTERNAL";return c;
     }
     @Override protected Result shoot(CombatContext ctx) {
-        GunType type=type(ctx.weapon);ItemStack ammo=ItemStack.EMPTY;
-        for(int i=0;i<slots(ctx.weapon);i++) { ItemStack mag=magazine(ctx.weapon,i);if(rounds(mag)>0){ammo=mag;break;} }
+        GunType type=type(ctx.weapon);ItemStack ammo=loadedMagazine(ctx.weapon);
         if(ammo.isEmpty() && infinite(ctx)){ammo=defaultMagazine(ctx.weapon);if(!ammo.isEmpty())gun(ctx.weapon).setBulletItemStack(ctx.weapon,ammo,0);}
         if(ammo.isEmpty())return Result.fail("NO_AMMO");
         ShootableType shootable=((ItemShootable)ammo.getItem()).type;
