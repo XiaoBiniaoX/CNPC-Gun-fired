@@ -12,6 +12,7 @@ import net.minecraft.world.item.ItemStack;
 public final class RuntimeState {
     public final bincnpc.gun.common.combat.MovementState movement = new bincnpc.gun.common.combat.MovementState();
     public final bincnpc.gun.gun.controller.RecoilState recoil = new bincnpc.gun.gun.controller.RecoilState();
+    public final bincnpc.gun.gun.controller.AimPrediction prediction = new bincnpc.gun.gun.controller.AimPrediction();
     public long lastTick = Long.MIN_VALUE, nextDecision, nextShot, noAmmoRetry, nextSwitch, lastSupply,
         firstTargetTick, lastHurt = -1000, nextTargetScan, actionEnd;
     public long inventoryFingerprint, nextCapabilityCheck, nextAnimationSummary, lastFired = -1000;

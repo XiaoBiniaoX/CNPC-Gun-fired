@@ -14,6 +14,19 @@ public final class Armory {
     public static final int SIZE = 6;
     private final ItemStack[] slots = {ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY, ItemStack.EMPTY};
     public int active;
+    public final ReturnTimer returnTimer = new ReturnTimer();
+
+    /** Server-tick clock; switching targets does not count as leaving combat. */
+    public static final class ReturnTimer {
+        private boolean fighting;
+        private long idleSince = -1;
+        public boolean tick(long now, boolean hasTarget) {
+            if (hasTarget) { fighting = true; idleSince = -1; }
+            else if (fighting) { fighting = false; idleSince = now; }
+            return idleSince >= 0 && now - idleSince >= 100;
+        }
+        public void reset() { fighting = false; idleSince = -1; }
+    }
 
     public ItemStack get(EntityNPCInterface npc, int index) {
         if (index < 0 || index >= SIZE) return ItemStack.EMPTY;
@@ -96,6 +109,7 @@ public final class Armory {
 
     /** Called after an edit or NPC reset, with native actions already cancelled. */
     public void restorePrimary(CombatContext ctx) {
+        returnTimer.reset();
         int preferred = ctx.config.integer("weapon.primarySlot");
         if (preferred == active || get(ctx.npc, preferred).isEmpty()) return;
         slots[active] = get(ctx.npc, active);
@@ -122,6 +136,7 @@ public final class Armory {
     }
 
     public void load(CompoundTag tag) {
+        returnTimer.reset();
         if (tag == null) tag = new CompoundTag();
         active = Math.max(0, Math.min(SIZE - 1, tag.getInt("Active")));
         java.util.Arrays.fill(slots, ItemStack.EMPTY);

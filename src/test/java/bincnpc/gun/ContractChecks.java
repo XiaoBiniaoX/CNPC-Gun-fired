@@ -17,6 +17,8 @@ import bincnpc.gun.gun.controller.ReloadPolicy;
 import bincnpc.gun.gun.ammo.AmmoPolicy;
 import bincnpc.gun.gun.controller.RecoilState;
 import bincnpc.gun.gun.controller.FireTiming;
+import bincnpc.gun.gun.controller.AimPrediction;
+import bincnpc.gun.gun.switching.Armory;
 import bincnpc.gun.compat.superb.BocekDrawState;
 import com.google.gson.*;
 import java.util.*;
@@ -27,7 +29,7 @@ import org.objectweb.asm.tree.*;
 public final class ContractChecks {
     private static int checks;
     public static void main(String[] args) throws Exception {
-        json(); schema(); graphs(); scheduling(); combatDecisions(); targetSearch(); ballistics(); throwingPolicy(); reloadTiming(); ammunitionPolicy(); recoil(); firing(); bowDraw(); presets(); editing(); api();
+        json(); schema(); graphs(); scheduling(); combatDecisions(); targetSearch(); ballistics(); throwingPolicy(); reloadTiming(); ammunitionPolicy(); recoil(); firing(); combatOptions(); bowDraw(); presets(); editing(); api();
         EditorChecks.run();
         System.out.println("CNPCGUN_CONTRACT_CHECKS=" + checks + " PASSED");
     }
@@ -192,6 +194,65 @@ public final class ContractChecks {
         FireTiming.Settings beforeAmmoEdit = FireTiming.Settings.read(config);
         config.set("ammo.defaultReserve", new JsonPrimitive(50));
         check(beforeAmmoEdit.equals(FireTiming.Settings.read(config)), "unrelated ammunition edits retain the firing plan");
+    }
+    private static void combatOptions() throws Exception {
+        NpcConfig config = new NpcConfig();
+        check(config.bool("weapon.returnPrimary") && !config.bool("gun.predictiveAim") && !config.bool("combat.disablePlayerAnimation"),
+            "primary return is on by default; prediction and animation suppression are off");
+        config.set("weapon.returnPrimary", new JsonPrimitive(false));
+        config.set("gun.predictiveAim", new JsonPrimitive(true));
+        config.set("combat.disablePlayerAnimation", new JsonPrimitive(true));
+        NpcConfig restored = new NpcConfig(config.snapshot());
+        check(!restored.bool("weapon.returnPrimary") && restored.bool("gun.predictiveAim") && restored.bool("combat.disablePlayerAnimation")
+            && !restored.bool("gun.disableIdleAnimation"), "three options persist independently of idle animation control");
+
+        Armory.ReturnTimer timer = new Armory.ReturnTimer();
+        check(!timer.tick(500, false), "an NPC that never fought does not start a return timer");
+        check(!timer.tick(501, true) && !timer.tick(502, true), "a live target keeps return disarmed");
+        check(!timer.tick(503, false) && !timer.tick(602, false) && timer.tick(603, false), "return requires a full 100 ticks after target loss");
+        check(!timer.tick(604, true) && !timer.tick(605, false) && !timer.tick(704, false) && timer.tick(705, false),
+            "renewed combat cancels the old deadline and starts a full new delay");
+        timer.reset(); check(!timer.tick(900, false), "editor/reset restoration clears a pending return");
+
+        UUID target = UUID.randomUUID(), other = UUID.randomUUID();
+        AimPrediction aim = new AimPrediction();
+        aim.sample(target, 10, 0, 0, 0); aim.sample(target, 11, 0, 0, 1);
+        double time = aim.time(target, 11, 10, 0, 0, 2);
+        check(Math.abs(time - Math.sqrt(100.0 / 3)) < 1E-8, "lateral lead solves the interception equation");
+        check(Math.abs(Math.sqrt(100 + time * time) - 2 * time) < 1E-8, "predicted point and projectile arrive together");
+        aim.sample(target, 11, 50, 0, 50);
+        check(aim.vx() == 0 && aim.vz() == 1, "multiple aim queries in one tick do not replace the movement sample");
+        check(aim.time(other, 11, 10, 0, 0, 2) == 0 && aim.time(target, 12, 10, 0, 0, 2) == 0,
+            "changed targets and stale samples cannot retain a lead");
+        check(aim.time(target, 11, 10, 0, 0, 0) == 0 && aim.time(target, 11, 10, 0, 0, Double.NaN) == 0,
+            "unknown and invalid native speeds retain direct aim");
+        check(aim.time(target, 11, 0, 0, 10, 1) == 0 && aim.time(target, 11, 10, 0, 0, 0.5) == 0,
+            "unreachable interception has no false positive");
+        check(Math.abs(aim.time(target, 11, 0, 0, -10, 1) - 5) < 1E-8, "equal-speed approaching targets use the linear root");
+        aim.sample(other, 12, 1, 0, 0);
+        check(aim.vx() == 0 && aim.vy() == 0 && aim.vz() == 0, "target changes clear velocity");
+        aim.sample(other, 14, 3, 0, 0); check(aim.vx() == 0, "skipped server samples do not extrapolate");
+        aim.sample(other, 15, 100, 0, 0); check(aim.vx() == 0, "teleports clear velocity");
+        check(aim.time(other, 15, 1000, 0, 0, 1) == 100, "constant-velocity prediction has a five-second ceiling");
+        aim.clear(); check(aim.time(other, 15, 10, 0, 0, 2) == 0, "disabling prediction discards its sample");
+
+        MethodNode receive = bytecode("bincnpc.gun.client.animation.NpcAnimations", "receive");
+        var animationCalls = calls(receive);
+        check(animationCalls.indexOf("java/util/Map.remove") >= 0 && animationCalls.indexOf("java/util/Map.remove") < animationCalls.indexOf("java/util/Map.computeIfAbsent"),
+            "animation suppression clears the old instance before creating or starting any replacement");
+        for (String method : List.of("statePose", "animation")) {
+            // animation has two overloads; inspect the overload that actually sends the packet.
+            try (var stream = ContractChecks.class.getResourceAsStream("/bincnpc/gun/common/network/GunNetwork.class")) {
+                ClassNode type = new ClassNode(); new ClassReader(stream).accept(type, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+                check(type.methods.stream().filter(item -> item.name.equals(method)).anyMatch(item -> {
+                    boolean option = false, disabled = false;
+                    for (var instruction : item.instructions) if (instruction instanceof LdcInsnNode constant) {
+                        option |= "combat.disablePlayerAnimation".equals(constant.cst); disabled |= "STATE_DISABLED".equals(constant.cst);
+                    }
+                    return option && disabled;
+                }), "animation option covers action packets and initial/periodic state: " + method);
+            }
+        }
     }
     private static void graphs() {
         Map<String, ActionRegistry.Definition> actions = Map.of("slashblade:tests/basic", definition("slashblade:tests/basic", "NORMAL_ATTACK"));

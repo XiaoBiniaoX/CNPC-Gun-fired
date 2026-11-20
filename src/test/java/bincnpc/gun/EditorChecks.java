@@ -205,6 +205,7 @@ public final class EditorChecks {
         for (String setting : List.of("gun.prefire", "gun.lostSight", "ammo.reloadTiming", "ammo.source", "ammo.priority"))
             for (String option : ConfigSchema.get(setting).values) keys.add("cnpcgun.editor.option." + option.toLowerCase(Locale.ROOT));
         keys.add("cnpcgun.editor.option.reload_native"); keys.add("cnpcgun.editor.option.reload_custom");
+        for (String hint : List.of("returnPrimaryHint", "playerAnimationHint", "predictiveAimHint")) keys.add("cnpcgun.editor." + hint);
         for (int slot = 0; slot < 3; slot++) for (String setting : List.of("timing", "trajectory", "area", "lostTarget"))
             for (String option : ConfigSchema.get("throw.slot" + slot + "." + setting).values) keys.add("cnpcgun.editor.throw.option." + option.toLowerCase(Locale.ROOT));
         Set<String> previous = null;

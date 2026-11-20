@@ -377,7 +377,7 @@ public final class GuiWeapons extends Screen implements EditorDialogs.Host {
     }
     private void shooting() {
         newForm(body(), "shooting");
-        Set<String> basic = Set.of("gun.enabled", "gun.autoAttack", "gun.minRange", "gun.range", "gun.requireAim", "gun.moveFire", "gun.jumpFire", "gun.blindFire", "gun.lostSight", "gun.prefire", "gun.accuracy");
+        Set<String> basic = Set.of("gun.enabled", "gun.autoAttack", "gun.minRange", "gun.range", "gun.requireAim", "gun.moveFire", "gun.jumpFire", "gun.blindFire", "gun.lostSight", "gun.prefire", "gun.accuracy", "gun.predictiveAim");
         fields(tr("engagement"), p -> basic.contains(p.id) && !Set.of("gun.lostSight", "gun.prefire").contains(p.id));
         segments("gun.prefire"); segments("gun.lostSight");
         form.heading(tr("firePattern"));

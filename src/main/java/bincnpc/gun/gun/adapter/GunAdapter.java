@@ -30,6 +30,8 @@ public interface GunAdapter extends WeaponAdapter {
     default void resetReserve(CombatContext context, ItemStack weapon) {}
     default int baseInterval(ItemStack stack) { return 4; }
     default int nativeInterval(CombatContext context) { return baseInterval(context.weapon); }
+    /** Native muzzle speed in blocks/tick; zero means unknown or instantaneous, so retain direct aim. */
+    default double projectileSpeed(CombatContext context) { return 0; }
     default Double spread(ItemStack stack) { return null; }
     default Double recoil(ItemStack stack) { return null; }
     default double configuredRecoil(CombatContext ctx) {

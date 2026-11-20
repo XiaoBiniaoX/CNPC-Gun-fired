@@ -339,10 +339,12 @@ public final class GunNetwork {
         int ticks = Math.max(1, Math.min(2400, duration));
         if (ctx.runtime.domain.equals("GUN") && (pose.equals("FIRE") || pose.equals("MELEE")))
             ctx.runtime.gunAnimationUntil = Math.max(ctx.runtime.gunAnimationUntil, ctx.now + ticks);
+        if (ctx.config.bool("combat.disablePlayerAnimation")) pose = "STATE_DISABLED";
         CHANNEL.send(PacketDistributor.TRACKING_ENTITY.with(() -> ctx.npc), new Animation(ctx.npc.getId(), ctx.npc.getUUID(),
             ctx.runtime.domain, pose, actionId, ticks, ctx.runtime.aiming));
     }
     public static String statePose(CombatContext ctx) {
+        if (ctx.config.bool("combat.disablePlayerAnimation")) return "STATE_DISABLED";
         if (!ctx.runtime.domain.equals("GUN") || !ctx.config.bool("gun.disableIdleAnimation")) return "STATE";
         boolean action = ctx.runtime.reloading || ctx.now < ctx.runtime.gunAnimationUntil
             || ctx.runtime.scheduler.busy(ctx.now) && Set.of("GUN", "RELOAD", "THROW").contains(ctx.runtime.scheduler.channel);

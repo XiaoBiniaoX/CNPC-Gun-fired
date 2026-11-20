@@ -16,6 +16,7 @@ public final class CombatContext {
     public final LivingEntity target;
     public final long now;
     public final double distance;
+    private net.minecraft.world.phys.Vec3 aimPoint;
     public CombatContext(EntityNPCInterface npc) { this(npc, npc == null ? null : npc.getTarget()); }
     public CombatContext(EntityNPCInterface npc, LivingEntity target) {
         this(npc, target, mainHand(npc));
@@ -51,13 +52,26 @@ public final class CombatContext {
     }
     public float yaw() {
         if (target == null) return npc.getYRot();
-        return (float)(Math.toDegrees(Math.atan2(target.getZ() - npc.getZ(), target.getX() - npc.getX())) - 90) + runtime.shotYawOffset;
+        var point = aimPoint();
+        return (float)(Math.toDegrees(Math.atan2(point.z - npc.getZ(), point.x - npc.getX())) - 90) + runtime.shotYawOffset;
     }
     public float pitch() {
         if (target == null) return npc.getXRot();
-        double dx = target.getX() - npc.getX(), dz = target.getZ() - npc.getZ();
-        return net.minecraft.util.Mth.clamp((float)(-Math.toDegrees(Math.atan2(target.getEyeY() - npc.getEyeY(), Math.sqrt(dx * dx + dz * dz)))
+        var point = aimPoint();
+        double dx = point.x - npc.getX(), dz = point.z - npc.getZ();
+        return net.minecraft.util.Mth.clamp((float)(-Math.toDegrees(Math.atan2(point.y - npc.getEyeY(), Math.sqrt(dx * dx + dz * dz)))
             + runtime.recoil.pitch()) + runtime.shotPitchOffset, -90, 90);
+    }
+    private net.minecraft.world.phys.Vec3 aimPoint() {
+        if (aimPoint != null) return aimPoint;
+        aimPoint = target.getEyePosition();
+        if (config.bool("gun.predictiveAim") && CombatService.serverThread(npc) && validTarget()
+                && runtime.adapter instanceof bincnpc.gun.gun.adapter.GunAdapter gun) {
+            double speed = bincnpc.gun.common.adapter.AdapterRegistry.query(gun, () -> gun.projectileSpeed(this), 0.0);
+            double time = runtime.prediction.time(target.getUUID(), now, aimPoint.x - npc.getX(), aimPoint.y - npc.getEyeY(), aimPoint.z - npc.getZ(), speed);
+            aimPoint = aimPoint.add(runtime.prediction.vx() * time, runtime.prediction.vy() * time, runtime.prediction.vz() * time);
+        }
+        return aimPoint;
     }
     public boolean isPrefiring() {
         String mode = config.text("gun.prefire");

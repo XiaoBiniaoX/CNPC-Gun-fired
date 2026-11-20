@@ -41,6 +41,7 @@ public final class NpcAnimations {
     public static void receive(GunNetwork.Animation packet) {
         var level = Minecraft.getInstance().level;
         if (level == null || !(level.getEntity(packet.entityId()) instanceof EntityNPCInterface npc) || !npc.getUUID().equals(packet.npcId())) return;
+        if (packet.pose().equals("STATE_DISABLED")) { ANIMATIONS.remove(npc); return; }
         WeaponAnimation animation = ANIMATIONS.computeIfAbsent(npc, WeaponAnimation::new);
         if (packet.pose().equals("STATE") || packet.pose().equals("STATE_IDLE")) {
             animation.state(packet.domain(), packet.aiming(), packet.pose().equals("STATE_IDLE"));

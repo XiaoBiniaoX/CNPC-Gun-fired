@@ -77,6 +77,10 @@ public final class ArtificeAdapter implements GunAdapter {
             default -> Result.fail("INVALID_NPC");
         };
     }
+    @Override public double projectileSpeed(CombatContext ctx) {
+        // A null shooter composes native item modifiers without posting a second ComposeShotEvent.
+        return GunplayManager.compose(null, gun(ctx.weapon).getGun(), ctx.weapon).value(ShotComponents.BULLET_SPEED);
+    }
     @Override public Result reload(CombatContext ctx) {
         if (!ammo(ctx).canReload) return Result.fail(GunItem.isReloading(ctx.weapon) ? "BUSY" : "NO_AMMO");
         ReloadResult result = GunplayManager.attemptStartReload(ctx.npc, ctx.weapon);

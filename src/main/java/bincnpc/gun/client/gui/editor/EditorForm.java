@@ -174,6 +174,9 @@ public final class EditorForm extends AbstractWidget {
         if (p.id.equals("gun.prefire")) return GuiSupport.tr("cnpcgun.editor.prefireHint");
         if (p.id.equals("gun.overrideNativeRate")) return GuiSupport.tr("cnpcgun.editor.nativeRateHint");
         if (p.id.equals("gun.disableIdleAnimation")) return GuiSupport.tr("cnpcgun.editor.idleGunAnimationHint");
+        if (p.id.equals("weapon.returnPrimary")) return GuiSupport.tr("cnpcgun.editor.returnPrimaryHint");
+        if (p.id.equals("combat.disablePlayerAnimation")) return GuiSupport.tr("cnpcgun.editor.playerAnimationHint");
+        if (p.id.equals("gun.predictiveAim")) return GuiSupport.tr("cnpcgun.editor.predictiveAimHint");
         if (p.min != null) {
             double scale = percentage(p) ? 100 : 1;
             return displayNumber(new JsonPrimitive(p.min * scale), false) + " – " + displayNumber(new JsonPrimitive(p.max * scale), false) + " " + unit(p);
@@ -261,7 +264,7 @@ public final class EditorForm extends AbstractWidget {
                 int labelWidth = field.segmented ? field.box.width() - 8 : components ? field.box.width() / 2 - 8
                     : field.controls.get(0).getX() - field.box.x() - 10;
                 int hintWidth = components ? field.box.width() / 2 - 4 : labelWidth;
-                if (field.parameter.id.equals("gun.prefire") || font.width(label) > labelWidth || !field.segmented && font.width(description) > hintWidth || !field.available.getAsBoolean())
+                if (Set.of("gun.prefire", "weapon.returnPrimary", "combat.disablePlayerAnimation", "gun.predictiveAim").contains(field.parameter.id) || font.width(label) > labelWidth || !field.segmented && font.width(description) > hintWidth || !field.available.getAsBoolean())
                     setTooltip(Tooltip.create(Component.literal(label + (description.isEmpty() ? "" : "\n" + description))));
             }
         }

@@ -130,6 +130,12 @@ public final class TaczAdapter implements GunAdapter {
             ? nativeData.getBurstData().getMinInterval() * 1000 : nativeData.getShootInterval(ctx.npc, mode, ctx.weapon);
         return Double.isFinite(millis) ? Math.max(1, (int)Math.ceil(millis / 50)) : baseInterval(ctx.weapon);
     }
+    @Override public double projectileSpeed(CombatContext ctx) {
+        var cache = IGunOperator.fromLivingEntity(ctx.npc).getCacheProperty();
+        Float speed = cache == null ? null : cache.getCache(com.tacz.guns.api.GunProperties.AMMO_SPEED);
+        return (speed == null ? data(ctx.weapon).getBulletData().getSpeed() : speed)
+            * com.tacz.guns.config.common.AmmoConfig.GLOBAL_BULLET_SPEED_MODIFIER.get() / 20.0;
+    }
     public static CombatContext fireContext(LivingEntity shooter, ItemStack stack) {
         if (!(shooter instanceof EntityNPCInterface npc) || !CombatService.serverThread(npc) || !CombatService.validNpc(npc)) return null;
         CombatContext ctx = new CombatContext(npc);

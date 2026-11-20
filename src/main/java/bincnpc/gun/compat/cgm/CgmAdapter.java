@@ -96,6 +96,10 @@ public final class CgmAdapter implements GunAdapter {
         sound(ctx, nativeGun, false);
         return Result.success();
     }
+    @Override public double projectileSpeed(CombatContext ctx) {
+        return GunModifierHelper.getModifiedProjectileSpeed(ctx.weapon,
+            gun(ctx.weapon).getProjectile().getSpeed() * GunEnchantmentHelper.getProjectileSpeedModifier(ctx.weapon));
+    }
     private void commitShot(CombatContext ctx) {
         if (!infinite(ctx)) {
             int level = net.minecraft.world.item.enchantment.EnchantmentHelper.getItemEnchantmentLevel(com.mrcrayfish.guns.init.ModEnchantments.RECLAIMED.get(), ctx.weapon);

@@ -67,6 +67,9 @@ public final class CombatService {
         if (ctx.runtime.lastTick == ctx.now) return;
         ctx.runtime.lastTick = ctx.now;
         refresh(ctx);
+        if (ctx.config.bool("gun.predictiveAim") && ctx.runtime.adapter instanceof GunAdapter && ctx.validTarget())
+            ctx.runtime.prediction.sample(ctx.target.getUUID(), ctx.now, ctx.target.getX(), ctx.target.getY(), ctx.target.getZ());
+        else ctx.runtime.prediction.clear();
         ctx.runtime.recoil.advance(ctx.now, ctx.runtime.adapter instanceof GunAdapter && ctx.config.bool("combat.enabled")
             && ctx.config.bool("gun.enabled") && ctx.config.bool("gun.applyRecoil") && !ctx.runtime.editorPaused);
         ctx.runtime.scheduler.expire(ctx.now);
@@ -98,6 +101,13 @@ public final class CombatService {
             setState(ctx, "IDLE");
             if (ctx.config.bool("combat.stopOnInvalidTarget") && ctx.runtime.scheduler.interruptible
                     && ctx.runtime.scheduler.channel.equals("GUN")) ctx.data.gun.stop(ctx);
+        }
+        boolean returnDue = ctx.data.armory.returnTimer.tick(ctx.now, target != null);
+        if (returnDue && ctx.config.bool("weapon.returnPrimary") && ctx.runtime.command.equals("AUTO") && !ctx.runtime.reloading
+                && ctx.data.armory.active != ctx.config.integer("weapon.primarySlot")
+                && ctx.data.armory.switchTo(ctx, ctx.config.integer("weapon.primarySlot")).ok) {
+            ctx.data.armory.returnTimer.reset();
+            invalidateDecision(ctx); EventBridge.flush(ctx); return;
         }
         if (ctx.now >= ctx.runtime.noAmmoRetry && ctx.runtime.noAmmoEvent) {
             long fingerprint = new AmmoInventory(npc).fingerprint();

@@ -103,6 +103,7 @@ public final class SuperbAdapter implements GunAdapter {
     @Override public Result fire(CombatContext ctx) {
         return SuperbFireRate.fire(ctx, () -> fireNative(ctx));
     }
+    @Override public double projectileSpeed(CombatContext ctx) { return gun(ctx.weapon).get(GunProp.VELOCITY); }
     private Result fireNative(CombatContext ctx) {
         GunData gun = gun(ctx.weapon);
         if (gun.reloading()) { SuperbBow.cancel(ctx); return Result.fail("BUSY"); }
